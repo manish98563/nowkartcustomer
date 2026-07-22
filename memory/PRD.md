@@ -1,73 +1,116 @@
-# NowKart — Project Memory
+# NOW KART — LIVING PRD
 
 ## Source of Truth
-Repository: https://github.com/manish98563/nowkart (main branch)
+Repository: https://github.com/manish98563/nowkarthandover (main branch)
+
+---
+
+## What This Project Is
+Now Kart is a React Native + Expo (Expo Router) grocery-delivery customer app backed by a FastAPI BFF and MongoDB, acting as a headless mobile front-end for a real Shopify store (vcq88p-fj.myshopify.com).
+
+---
 
 ## Iterations Completed
 
-### Iterations 1–6 (see previous entries)
-UI, Shopify Storefront, Auth, Checkout, Address Management, Order Management — all code-complete.
+### Iterations 1–7 — Customer App (see NOWKART_MASTER_HANDOVER.md)
+UI, Shopify Storefront, Auth, Checkout, Address Management, Order Management, Live Tracking — all code-complete.
 
-### Iteration 7 — Live Order Tracking & Delivery Foundation (2026-07-21)
+### Iteration 8 — Delivery Service Backend (2026-07-22)
 
 #### What was built
 
-**Backend (4 new files):**
-- `backend/tracking/__init__.py` — new module
-- `backend/tracking/schemas.py` — `TrackingStageOut`, `TrackingStatusOut` with architecture prep comments (riderName, riderLocation, riderEta fields commented out, ready to uncomment for Rider App)
-- `backend/tracking/service.py` — `get_tracking_status(user, order_id)` derives tracking from Shopify fulfillment data; `_build_stages()` maps financialStatus + fulfillmentStatus + fulfillments → timeline stages
-- `backend/tracking/router.py` — `GET /api/tracking/order?id=<encoded_gid>` (query param, NGINX-safe)
-- `backend/server.py` modified — mounts `tracking_router` at `/api`
+**New backend modules (11 files):**
+- `backend/delivery/__init__.py`
+- `backend/delivery/db.py` — delivery_jobs + stores collections, indexes
+- `backend/delivery/schemas.py` — DeliveryJobStatus enum, all Pydantic models (customer view + full view), StoreOut
+- `backend/delivery/service.py` — full state machine, job creation, store seeding, queries, cancel logic
+- `backend/delivery/router.py` — /api/delivery/* endpoints
+- `backend/webhooks/__init__.py`
+- `backend/webhooks/db.py` — webhook_events collection + unique index
+- `backend/webhooks/schemas.py` — Shopify REST payload schemas
+- `backend/webhooks/verification.py` — HMAC-SHA256 signature verification
+- `backend/webhooks/service.py` — webhook routing (orders/paid → create job, orders/cancelled → cancel job)
+- `backend/webhooks/router.py` — POST /api/webhooks/shopify
 
-**Frontend (6 new/modified files):**
-- `src/types/tracking.ts` — `TrackingStage`, `TrackingStatus` with Rider App extension points commented
-- `src/types/index.ts` — exports new types
-- `src/repositories/trackingRepository.ts` — `getTrackingStatus(orderId)`
-- `src/repositories/index.ts` — exports trackingRepository
-- `app/order/track.tsx` *(new)* — dedicated tracking screen:
-  - `AppState`-aware auto-refresh every 30s (stops in background, stops when !isActive)
-  - `useFocusEffect` cleanup prevents background polling when screen is unfocused
-  - Live pulsing dot badge when `tracking.isActive = true`
-  - Hero status card with current stage label + ETA message (honest Shopify data only)
-  - Countdown timer showing "Refreshing in Xs"
-  - Full timeline with timestamps from Shopify fulfillment data
-  - Delivery address card
-  - Compact items list (from TrackingStatus.items — one API call covers all)
-  - Pull-to-refresh
-  - Auth guard, loading, error states
-- `app/order/detail.tsx` modified — "Track Order" button for active orders (navigates to `/order/track`)
-- `app/(tabs)/orders.tsx` modified — "Track Order" pill button on active order cards
-- `app/_layout.tsx` modified — `Stack.Screen` for `order/track`
+**Modified files:**
+- `backend/server.py` — mounts delivery_router + webhooks_router, unified startup_event
+- `backend/.env` — adds SHOPIFY_WEBHOOK_SECRET (empty), DELIVERY_DEFAULT_STORE_NAME, DELIVERY_DEFAULT_ETA_MINUTES
 
-#### Architecture prep for Rider App
-The `TrackingStatusOut` model and `TrackingStatus` TypeScript interface have commented-out fields that will be added when the Rider App ships:
-- `riderName`, `riderPhone` — Rider identification
-- `riderLocation: {lat, lng, updatedAt}` — GPS coordinates
-- `riderEta` — Rider's GPS-computed ETA
-- `trackingUrl` — External courier tracking
-These can be added to `TrackingStatusOut` without breaking existing consumers.
-The tracking screen will show a MapView when `riderLocation` becomes available.
-
-#### Stage derivation logic (Shopify data only — no fabrication)
-| Stage | Condition |
+#### New MongoDB Collections
+| Collection | Purpose |
 |---|---|
-| placed | Always done (order exists) |
-| confirmed | financialStatus in PAID/AUTHORIZED/PARTIALLY_PAID |
-| preparing | fulfillments.length > 0 OR fulfillmentStatus = PARTIAL |
-| out_for_delivery | has_fulfillment AND NOT fulfilled (future: Rider App status) |
-| delivered | fulfillmentStatus = FULFILLED |
-| cancelled | cancelledAt is set |
+| delivery_jobs | Central delivery job lifecycle records |
+| stores | Store configuration (seeded with default on startup) |
+| webhook_events | Shopify webhook audit log + idempotency |
 
-## API Routes (19 total)
-NEW: `GET /api/tracking/order?id=<encoded_gid>`
+#### State Machine
+PENDING_ASSIGNMENT → ASSIGNED → AT_STORE → IN_TRANSIT → ARRIVED → DELIVERED (terminal)
+PENDING_ASSIGNMENT/ASSIGNED/AT_STORE → CANCELLED (terminal)
+IN_TRANSIT → FAILED_DELIVERY → PENDING_ASSIGNMENT (retry) or CANCELLED
+FAILED_DELIVERY → CANCELLED
+
+#### Testing
+51/51 backend tests passed (test_delivery_service_iteration16.py)
+
+---
+
+## New API Routes (Iteration 8)
+
+### Delivery
+- `GET /api/delivery/job?orderId=` — customer views their delivery job (customer JWT required)
+- `GET /api/delivery/jobs` — list all jobs (no auth — TODO admin JWT)
+- `GET /api/delivery/jobs/{jobId}` — full job detail (no auth — TODO admin JWT)
+- `PUT /api/delivery/jobs/{jobId}/status` — state machine update (no auth — TODO admin+rider JWT)
+- `POST /api/delivery/jobs/{jobId}/cancel` — cancel job (no auth — TODO admin JWT)
+- `GET /api/delivery/stores` — list stores (no auth — TODO admin JWT)
+
+### Webhooks
+- `POST /api/webhooks/shopify` — receives orders/paid and orders/cancelled (HMAC verified)
+
+---
 
 ## Project Completion
 - Customer shopping app scope: ~98%
-- Full vision (Rider, Merchant, Admin, Payments): ~60%
+- Delivery Service backend: Complete (Iteration 8)
+- Full platform vision (Rider App, Admin Dashboard, Payments, App Store): ~65%
 
-## Next Tasks (P0 → P4)
-- P0: Native build → Publish → iOS/Android → verify real Shopify login + payment + orders
-- P1: Auto-set default Shopify address as delivery address on login
-- P2: Shopify Checkout Sheet Kit (Apple Pay / Google Pay)
-- P3: Rider App (uses tracking module extension points)
-- P4: Merchant Dashboard, Admin Dashboard, push notifications
+---
+
+## Next Tasks (ordered)
+
+### P0 — Rider App (Iteration 9) — Separate Repository
+- POST /api/rider/auth/login (email + password → rider JWT)
+- POST /api/rider/auth/refresh, /logout
+- GET /api/rider/job/current
+- POST /api/rider/location (GPS batch)
+- POST /api/rider/job/{id}/at-store, /picked-up, /arrived, /delivered, /failed
+- PUT /api/rider/status (online/offline toggle)
+
+### P1 — Admin Dashboard API (Iteration 10) — Separate Repository
+- POST /api/admin/auth/login (admin JWT with RBAC)
+- GET /api/admin/jobs, /api/admin/riders
+- POST /api/admin/jobs/{id}/assign, /reassign
+- POST /api/admin/riders (create rider account)
+- All existing delivery endpoints locked down to admin JWT
+
+### P2 — Lock Down Delivery Endpoints
+- Add admin JWT to currently-unauthenticated delivery endpoints
+- Add store-scoped RBAC
+
+### P3 — Google Maps ETA Module
+- GOOGLE_MAPS_API_KEY in .env
+- shared/eta_service.py — Distance Matrix API wrapper + cache
+- populate coordinates on delivery job creation (Geocoding API)
+- ETA refresh every 2 min during IN_TRANSIT
+
+### P4 — Push Notifications
+- notifications/ module
+- Expo Push / FCM integration
+
+### P5 — Redis + WebSocket Live GPS
+- rider/location WebSocket publish
+- customer/tracking WebSocket subscribe
+
+### P6 — Native Build + App Store
+- Emergent Publish → iOS + Android builds
+- Verify Shopify OAuth end-to-end
