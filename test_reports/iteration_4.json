@@ -1,0 +1,24 @@
+{
+  "summary": "Focused retest of the Product Detail 404 'Product not found' fix (round 2). Verified via Playwright on mobile viewport (375x667) against live public URL. Test 1 (valid product handle via Home -> product card tap): full product detail screen renders correctly - image, title, price, quantity stepper, Add to cart button, description - no visual regression. Test 2 (nonexistent handle via direct URL /product/this-handle-does-not-exist-xyz123): now correctly shows the dedicated 'Product not found' view (testID='product-not-found') with basket icon, title, subtitle, and working Back button - the generic 'Something went wrong / Try again' retry screen (testID='product-detail-error') is NOT shown. Bug from round 1 is confirmed FIXED. No console errors or crashes introduced by the change; styling/padding on both not-found and normal loaded states looks correct.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "useAsyncData.ts correctly threads errorStatus (ApiError.status) alongside the generic error string - clean, backward-compatible addition, no other callers of the hook broken.",
+    "product/[handle].tsx now checks `isNotFound = errorStatus === 404 || (!isLoading && !product && !error)` before the generic `if (error)` branch - correct ordering fixes the dead code issue identified in round 1.",
+    "Minor non-blocking observation (pre-existing, unrelated to this fix, NOT a regression): directly deep-linking to /product/<handle> (any handle, valid or invalid) with no prior in-app navigation history produces an Expo Router dev-only console warning 'GO_BACK was not handled by any navigator' when Back is tapped, since there is no screen to go back to. Confirmed this same behavior occurs on the normal product-back-button too when deep-linked directly (not specific to the not-found screen). When navigating in-app (Home -> product card -> Back), the Back button works correctly and returns to Home as expected. No action needed."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested this round (out of scope per request)", "frontend": "100% (2/2 fix-verification tests passed, 1/1 regression sanity check passed)"},
+  "seed_data_creation": "None - tested against live Shopify store data (real product handles) and a synthetic nonexistent handle.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The Product Detail 404 fix is verified working correctly. No regressions found in the normal product detail flow. Home/Categories/Collection/Search/Cart/Navigation flows from round 1 were not re-run per scope (only spot-checked Home->product navigation as part of Test 1, which worked fine). This bug is now closed.",
+  "rca_of_issue": "N/A - this was fix verification, not a new bug investigation. Original RCA documented in iteration_3.json remains accurate; fix applied matches the recommended solution (useAsyncData exposes errorStatus, screen branches on errorStatus === 404 before the generic error check)."
+}

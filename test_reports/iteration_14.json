@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 14 re-test of Order Management fixes. Backend GID query param endpoint works correctly. Frontend had a critical ReferenceError bug (isRestoring not destructured in detail.tsx) — fixed by T1. Orders screen unauthenticated state works correctly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "order/detail.tsx",
+        "issue": "FIXED: `isRestoring` was not destructured from `useAuth()` on line 64 — only `isAuthenticated` was destructured. Lines 99 and 103 referenced `isRestoring` causing ReferenceError crash on every visit to the order detail screen.",
+        "testID": "order-detail-screen",
+        "priority": "CRITICAL — FIXED"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Order detail unauthenticated error message",
+        "issue": "The auth guard correctly sets error='Please sign in to view order details.' but the ErrorState component renders a generic 'Something went wrong / We couldn't load this right now' message instead of displaying the actual error string. User does not see the custom sign-in prompt.",
+        "affected_testIDs": ["order-detail-error"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_orders_iteration14.py",
+    "/app/test_reports/pytest/pytest_iteration14.xml"
+  ],
+  "action_items": [
+    "DONE (T1 fixed): Add `isRestoring` to `useAuth()` destructure in order/detail.tsx line 64",
+    "OPTIONAL: Update ErrorState component to accept and display a custom error message string, so 'Please sign in to view order details.' is visible to the user instead of the generic fallback text"
+  ],
+  "critical_code_review_comments": [
+    "order/detail.tsx line 64: `const { isAuthenticated } = useAuth()` was missing `isRestoring` — used on lines 99 and 103 — caused ReferenceError crash. FIXED.",
+    "ErrorState component does not forward the `error` state message to the user. Consider adding a `message` prop to override the default subtitle."
+  ],
+  "updated_files": [
+    "/app/frontend/app/order/detail.tsx"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 tests passed)",
+    "frontend": "85% — orders screen works, order detail crash fixed, minor UX issue with generic error message"
+  },
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "T1 fixed the `isRestoring` ReferenceError in order/detail.tsx. Backend /api/auth/orders?id= query param endpoint returns 401 for unauthenticated (correct). /api/auth/orders without ?id returns 422. All auth regression endpoints pass. Orders screen shows correct guest gate for unauthenticated users. Cannot test order detail with real data or orders list since no real auth credentials are available for Shopify login.",
+  "rca_of_issue": "Root cause: order/detail.tsx useEffect was updated to use `isRestoring` (from the iteration 6 auth guard fix) but the `useAuth()` destructure on line 64 was only updated to include `isAuthenticated`, not `isRestoring`. This caused a ReferenceError at runtime whenever the component rendered. Fix: add `isRestoring` to the `useAuth()` destructure."
+}

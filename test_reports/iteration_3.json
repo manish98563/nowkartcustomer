@@ -1,0 +1,46 @@
+{
+  "summary": "First full regression test of the live Shopify Storefront API integration for Now Kart. Backend: 18/18 pytest tests passed (100%) covering home/categories/collections/product/search endpoints, full cart lifecycle (create->get->add->update->remove), error handling (404/422), and security (token never leaks in responses, backend logs, or frontend source). Frontend: extensive Playwright E2E testing on mobile viewport (375x667) against the live public URL covering Home, Categories, Collection, Search, Product Detail, Cart, and Navigation - all core flows work correctly with real Shopify data (UK grocery products, GBP pricing). Found 1 real bug (product-not-found dead code) and 1 low-severity infra-level observation (Cloudflare intercepts 5xx bodies). Two data limitations from the live store itself (no multi-variant products, no out-of-stock products currently) prevented testing those specific UI states, but the underlying code paths were reviewed and look correct.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "Any endpoint that surfaces a Shopify GraphQL error as HTTP 5xx (e.g. cart mutation with malformed GID)",
+        "issue": "Backend correctly returns a clean JSON body with a friendly message at 502 (verified directly against localhost:8001), but the public preview proxy/CDN (Cloudflare) intercepts any 5xx response and replaces the body with its own generic HTML error page before it reaches the client. This only happens for malformed/attacker-style input (never in normal app usage since cart/variant IDs always come from our own API responses), and the frontend doesn't crash on it (apiClient falls back to a generic 'Request failed (502)' message via its catch block), but the specific friendly Shopify error message never reaches the user in this edge case. Infra-level behavior, not an app code bug."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Product Detail screen (/app/frontend/app/product/[handle].tsx)",
+        "issue": "The 'Product not found' branch is dead code and unreachable. useAsyncData (src/shared/hooks/useAsyncData.ts) sets a non-null `error` string on ANY thrown error including a 404 (ApiError with status 404 for a genuinely missing product handle). ProductDetailScreen checks `if (error) return <ErrorState onRetry={refetch}/>` BEFORE checking `if (!isLoading && !product) return <Text>Product not found</Text>`. Since `error` is always truthy on a 404, users always see the generic 'Something went wrong / Try again' screen with a Retry button (that will loop-fail forever for a permanently missing product) instead of the intended, more accurate 'Product not found' message. Reproduced by navigating directly to /product/<nonexistent-handle>.",
+        "testID": "product-detail-error / product-not-found",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_shopify_integration.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Fix product-not-found dead code: in product/[handle].tsx, check for a 404 specifically (e.g. have useAsyncData or ApiError expose status, then branch: if error?.status === 404 -> 'Product not found', else -> generic ErrorState with retry). Alternatively have useAsyncData distinguish 'not found' from transient errors so Retry isn't offered for a permanent 404.",
+    "Optional/low priority: consider whether backend should ever surface Shopify GraphQL validation errors as 5xx vs 4xx (e.g. malformed cart/variant ID is arguably a client input error -> 400) so it isn't swallowed by any upstream proxy that treats 5xx specially. Not urgent since this path isn't reachable through normal app usage.",
+    "Not a code issue, but noting for context: the live Shopify store (vcq88p-fj.myshopify.com) currently has zero multi-variant products and zero out-of-stock products, so variant-chip price/availability switching and the out-of-stock banner/disabled-add-to-cart UI could not be exercised end-to-end with real data this pass. The code paths were reviewed and look correct (variant selection updates price/availability via selectedVariant memo; isOutOfStock disables stepper/shows banner). Recommend a quick manual spot-check once the store has such products, or a lightweight backend unit test with a mocked multi-variant/OOS Shopify response."
+  ],
+  "critical_code_review_comments": [
+    "shopify_integration module is clean, well-separated (client/service/router/mappers/cache/config) and async throughout - no sync-blocking I/O found.",
+    "Token handling is correct: read once in config.py from env, used only as an outgoing header in client.py, never included in any Pydantic response schema, never logged (client.py logs status codes and GraphQL error messages only). Verified empirically: grepped full backend log files and all API response bodies for the token string - zero matches. Grepped frontend source tree for the token pattern - zero matches.",
+    "Cart/line IDs (Shopify GIDs containing '://' and '?') are correctly passed via query string/JSON body rather than raw path segments, avoiding URL-encoding pitfalls - confirmed working for cart get/add/update/remove.",
+    "In-memory TTLCache (cache.py) is a reasonable choice for this scale; correctly time-boxed and not shared cross-process (documented limitation, fine for this deployment).",
+    "useAsyncData's error handling doesn't distinguish HTTP status codes (see ui_bugs) - this is the root cause of the one real bug found this pass.",
+    "collection_groups.py gracefully handles collections that don't exist yet on the live store (matched handles only) - verified in practice (frozen/dairy/staples-grains legitimately return 0 products and the UI shows EmptyState correctly rather than crashing)."
+  ],
+  "updated_files": ["/app/backend/tests/test_shopify_integration.py"],
+  "success_rate": {"backend": "100% (18/18 pytest)", "frontend": "~95% (1 medium bug found across ~20 flows tested)"},
+  "seed_data_creation": "None - all tests run against the live Shopify store (vcq88p-fj.myshopify.com) with real inventory, read-only browsing + cart create/add/update/remove (no checkout completion attempted, per scope).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend is fully verified and solid (100% pass, no token leakage anywhere). Frontend core flows (Home/Categories/Collection/Search/Product/Cart/Navigation) all work correctly with live data - cart lifecycle including duplicate-merge, increment/decrement/remove, badge sync, and AsyncStorage persistence across reload were all verified working via Playwright with real network calls (not mocked). Only one real app bug found: the Product Detail screen's 'Product not found' message is unreachable dead code because the generic error state is checked first (see ui_bugs for exact fix). After that's fixed, just re-verify navigating to /product/<nonexistent-handle> shows 'Product not found' instead of the generic retry screen. Also flag to main agent (informational, not code bug): the live store currently has no multi-variant or out-of-stock products, so those specific UI states are untested with real data this pass - a manual spot check or a small backend-level unit test with mocked data would give full confidence there.",
+  "rca_of_issue": "product/[handle].tsx renders `if (error) return <ErrorState .../>` before `if (!isLoading && !product) return <Text>Product not found</Text>`. useAsyncData's catch block sets `error` on every rejected promise regardless of the underlying HTTP status (404 vs 500 vs network failure all funnel into the same generic error string). Because a missing-product 404 always populates `error`, the code never falls through to the dedicated 'Product not found' branch - that branch is unreachable dead code today. Fix requires either: (a) useAsyncData tracking the HTTP status/type of error so callers can branch on it, or (b) ProductDetailScreen catching the fetch itself and checking `err instanceof ApiError && err.status === 404` before deferring to the generic ErrorState."
+}

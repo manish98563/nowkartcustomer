@@ -1,0 +1,50 @@
+{
+  "summary": "Full regression verification after repo restore + countryCode→territoryCode fix. All 13 backend tests pass. All key frontend screens verified. No regressions found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Search — query 'snack' returns 0 results",
+        "issue": "Shopify catalog has no products matching 'snack' (singular) but 'snacks' returns 15. This is a catalog data issue, not a code bug. UI correctly shows 'No results'.",
+        "affected_testIDs": []
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_endpoints.py",
+    "/app/test_reports/pytest/pytest_results_iter10.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "schemas.py: AddressIn uses territoryCode (required) and AddressOut uses territoryCode (optional) — countryCode is fully absent. Correct.",
+    "auth/router.py: /api/auth/me, /api/auth/addresses all use get_current_user_required dependency — returns 401 for unauthenticated. Correct.",
+    "auth/router.py: POST /api/auth/logout is best-effort and returns {ok:True} even for invalid tokens. Correct.",
+    "Profile screen web path: clicking Log In shows 'Sign-in is available in the Now Kart mobile app' banner inline — web-unsupported path works correctly."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100% (all screens verified)"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Full regression passed. territoryCode fix verified. All guest flows work. Next: implement checkout completion feature.",
+  "verified_features": [
+    "Home screen: Loads with hero banner, category groups (Snacks & Drinks, Grocery & Kitchen, Fresh Essentials), product rails (Best Sellers), bottom tabs",
+    "Search: Returns live Shopify results (tested: paratha=8, rice=11, snacks=15 results)",
+    "Categories tab: Shows Shopify category groups",
+    "Orders screen: Shows 'Sign in to view your orders' guest state",
+    "Profile screen: Shows guest gate (Log In, Sign Up, Continue browsing as guest)",
+    "Profile web Log In: Shows 'Sign-in is available in the Now Kart mobile app' feedback",
+    "Wishlist screen: Shows empty state with heart icon",
+    "Auth /api/auth/me: Returns 401 for unauthenticated (correct guard)",
+    "Auth /api/auth/logout: Returns {ok:True} (idempotent)",
+    "Auth authorize-url: Returns 200 with valid Shopify OAuth URL, state, redirectUri",
+    "Auth schemas: countryCode is ABSENT, territoryCode used everywhere",
+    "Cart create (guest): POST /api/shopify/cart returns 200 with cart id"
+  ]
+}

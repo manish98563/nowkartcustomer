@@ -1,0 +1,216 @@
+{
+  "theme": "dark",
+  "platform_primary": "iOS",
+  "platform_secondary": "Android",
+  "colors": {
+    "background": {
+      "base": "#0B0710",
+      "surface": "#100C18",
+      "surface_translucent": "rgba(16, 12, 24, 0.8)"
+    },
+    "primary": {
+      "main": "#8B5CF6",
+      "dark": "#7C3AED",
+      "gradient_start": "#9333EA",
+      "gradient_end": "#7C3AED"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A1A1AA",
+      "inverse": "#18181B",
+      "inverse_secondary": "#52525B",
+      "accent": "#8B5CF6"
+    },
+    "cards": {
+      "product_bg": "#FFFFFF",
+      "category_bg": "#F3E8FF"
+    },
+    "border": {
+      "default": "#27272A",
+      "active": "#8B5CF6"
+    },
+    "status": {
+      "success": "#22C55E",
+      "error": "#EF4444"
+    }
+  },
+  "typography": {
+    "font_family": "System, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+    "scale": {
+      "h1": {
+        "size": 32,
+        "weight": "800",
+        "line_height": 38,
+        "letter_spacing": -0.5
+      },
+      "h2": {
+        "size": 24,
+        "weight": "700",
+        "line_height": 32,
+        "letter_spacing": -0.3
+      },
+      "h3": {
+        "size": 18,
+        "weight": "700",
+        "line_height": 24,
+        "letter_spacing": -0.2
+      },
+      "body": {
+        "size": 14,
+        "weight": "400",
+        "line_height": 20,
+        "letter_spacing": 0
+      },
+      "body_bold": {
+        "size": 14,
+        "weight": "600",
+        "line_height": 20,
+        "letter_spacing": 0
+      },
+      "small": {
+        "size": 12,
+        "weight": "500",
+        "line_height": 16,
+        "letter_spacing": 0
+      },
+      "eyebrow": {
+        "size": 10,
+        "weight": "700",
+        "line_height": 12,
+        "letter_spacing": 1.5,
+        "text_transform": "uppercase"
+      }
+    }
+  },
+  "visual_enhancers": {
+    "border_radius": {
+      "sm": 8,
+      "md": 12,
+      "lg": 16,
+      "xl": 24,
+      "pill": 9999
+    },
+    "shadows": {
+      "soft": "0px 4px 12px rgba(0, 0, 0, 0.05)",
+      "elevation": "0px 8px 24px rgba(0, 0, 0, 0.12)"
+    },
+    "spacing": {
+      "xs": 4,
+      "sm": 8,
+      "md": 12,
+      "lg": 16,
+      "xl": 24,
+      "xxl": 32,
+      "xxxl": 48
+    }
+  },
+  "components": {
+    "header": {
+      "background": "surface_translucent",
+      "layout": "row, space-between, align-center",
+      "padding": "lg",
+      "blur": "Yes, standard iOS blur via Expo BlurView where applicable"
+    },
+    "delivery_selector": {
+      "background": "surface",
+      "border_radius": "pill",
+      "padding_vertical": "sm",
+      "padding_horizontal": "lg",
+      "layout": "row, align-center, gap-sm",
+      "text_style": "body_bold"
+    },
+    "search_bar": {
+      "background": "surface",
+      "border_radius": "pill",
+      "height": 48,
+      "padding_horizontal": "lg",
+      "focus_state": "border width 2px, color primary.main"
+    },
+    "hero_banner": {
+      "background": "Linear gradient (primary.gradient_start to primary.gradient_end)",
+      "border_radius": "xl",
+      "padding": "xl",
+      "badge": "pill shape, white text, semi-transparent background",
+      "title": "h1, white",
+      "cta": "pill shape, background white, text primary.inverse"
+    },
+    "category_card": {
+      "background": "cards.category_bg",
+      "border_radius": "lg",
+      "aspect_ratio": "1:1",
+      "layout": "center content, column",
+      "text": "small, inverse text color"
+    },
+    "product_card": {
+      "background": "cards.product_bg",
+      "border_radius": "lg",
+      "padding": "md",
+      "shadow": "soft",
+      "image": "top aligned, square aspect ratio",
+      "title": "body_bold, inverse",
+      "price": "h3, inverse",
+      "button_primary": "solid pill, background primary.main",
+      "button_outline": "outline pill, border primary.main, text primary.main"
+    },
+    "product_detail": {
+      "image_container": "cards.product_bg, border_radius xl",
+      "quantity_stepper": "pill shape, background surface, text primary",
+      "add_to_cart_btn": "full width, solid pill, primary.main"
+    },
+    "bottom_nav": {
+      "background": "base",
+      "border_top": "1px solid border.default",
+      "active_tab": "text primary.main, top indicator line primary.main",
+      "inactive_tab": "text text.secondary"
+    },
+    "toast": {
+      "background": "Linear gradient (primary.gradient_start to primary.gradient_end)",
+      "border_radius": "pill",
+      "position": "floating bottom, above nav",
+      "padding": "md"
+    }
+  },
+  "grids_layouts": {
+    "screen_padding": 16,
+    "category_grid": "4 columns, gap 12px",
+    "product_rail": "horizontal scroll, gap 16px, item width ~140px",
+    "product_grid": "2 columns, gap 16px"
+  },
+  "media": {
+    "image_urls": {
+      "hero_background": "Linear gradient utilized in code, no external image",
+      "product_snacks": [
+        "https://images.pexels.com/photos/34466116/pexels-photo-34466116.jpeg",
+        "https://images.pexels.com/photos/7033900/pexels-photo-7033900.jpeg"
+      ],
+      "product_beverages": [
+        "https://images.unsplash.com/photo-1585498154575-3db0fda49f1d",
+        "https://images.unsplash.com/photo-1696739696220-8d2e27465662"
+      ],
+      "product_groceries": [
+        "https://images.pexels.com/photos/4451867/pexels-photo-4451867.jpeg",
+        "https://images.pexels.com/photos/9070116/pexels-photo-9070116.jpeg"
+      ]
+    }
+  },
+  "instructions_to_main_agent": [
+    "CRITICAL: The target framework is React Native Expo utilizing Expo Router. DO NOT output HTML/Tailwind.",
+    "Use StyleSheet-based styling EXCLUSIVELY. Do NOT use NativeWind, Tailwind, or CSS files.",
+    "Ensure the application strictly follows an iOS-first aesthetic with fluid animations, native bottom sheets, and native feel, but keeps compatibility with Android.",
+    "Build the application architecture using a feature-based folder structure inside the 'app' directory.",
+    "All components must be completely modular and reusable, particularly typography wrappers, buttons, and cards.",
+    "Implement lists strictly using FlatList (or FlashList if configured) for performance, avoiding mapping over large standard arrays.",
+    "The UI is a dark theme as the background, BUT product cards are strictly white to create a high-contrast 'brutalist-lite' Shopify feel. Follow this explicit instruction strictly.",
+    "All interactive elements (buttons, inputs) must include 'testID' attributes for testing.",
+    "Use Lucide-React-Native or Expo Vector Icons (@expo/vector-icons) for iconography."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "Do not converge towards generic 'AI Slop' aesthetics. Stay strictly true to the Now Kart Shopify dark/purple/pill-shaped aesthetic defined in the references.",
+    "Always apply proper hit slop (e.g. hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}) to icon buttons and touchables to maintain accessible touch targets (44pt+).",
+    "Never use purely transparent overlays if they obscure text readability; implement exact `rgba` values or blur views.",
+    "Make heavy use of precise pixel-level padding and margin as specified in the scale. Do not guess the spacing.",
+    "Ensure all textual elements scale with device accessibility settings if applicable, but within reason (set maxFontSizeMultiplier).",
+    "Avoid centering layouts by default; follow standard native top-to-bottom and left-to-right visual hierarchies.",
+    "Never use raw text strings; wrap everything in a custom `<Text>` component that implements the typography system."
+  ]
+}

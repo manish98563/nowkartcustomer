@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 13 - Order Management & Customer Order Tracking. Backend all pass (8/8). Frontend: Orders guest state works, navigation works, order/detail route works. Fixed critical duplicate authRepository export. Found routing bug with Shopify GID slashes through Kubernetes ingress and a loading state bug on order detail for unauthenticated users.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/auth/orders/{order_id}",
+        "issue": "When order_id is URL-encoded Shopify GID (e.g. gid%3A%2F%2Fshopify%2FOrder%2F12345), the Kubernetes ingress decodes %2F to '/' before forwarding, causing 404. Simple IDs (no slashes) work correctly and return 401. This means real Shopify order GIDs cannot be fetched via the /api/auth/orders/{id} route in production.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "OrderDetailScreen",
+        "issue": "When user is not authenticated and navigates directly to /order/detail, isLoading stays true indefinitely. `load()` is only called when `isAuthenticated` is true, but initial `isLoading` state is `true` so spinner spins forever. Should show an error/redirect instead.",
+        "testID": "order-detail-loading",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_orders_iteration13.py",
+    "/app/test_reports/pytest/pytest_results_iter13.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Fix Shopify GID routing issue - %2F (encoded slashes) in order IDs get decoded by Kubernetes ingress, causing 404. Options: (a) use query param ?id= instead of path param, (b) use double-encoding (%252F), (c) use base64 encoding for the GID before passing to backend. authRepository.getOrder already uses encodeURIComponent but ingress still decodes.",
+    "MEDIUM: Fix OrderDetailScreen loading state for unauthenticated users - add check: if (!isAuthenticated && !isRestoring) { setIsLoading(false); setError('Sign in to view order details.'); return; }",
+    "LOW: authRepository.ts had a duplicate const authRepository declaration (second copy was missing getOrder method). FIXED by removing the duplicate in this iteration."
+  ],
+  "critical_code_review_comments": [
+    "authRepository.ts had TWO export const authRepository declarations - second one was missing getOrder. TypeScript would fail to compile. FIXED.",
+    "ORDER GID routing: authRepository.getOrder uses encodeURIComponent(orderId) but Kubernetes ingress decodes %2F → / before reaching FastAPI, breaking real Shopify GID paths. Frontend double-encodes but ingress still decodes. Need alternative approach (query param or different encoding).",
+    "OrderDetailScreen: initial isLoading=true but load() only runs when isAuthenticated=true, causing infinite spinner for unauthenticated direct navigation"
+  ],
+  "updated_files": [
+    "/app/frontend/src/repositories/authRepository.ts"
+  ],
+  "success_rate": {
+    "backend": "100% (8/8 tests pass)",
+    "frontend": "85% - guest state, navigation, route registration all work; order detail loading state bug for unauth users; GID routing issue will affect real order fetching"
+  },
+  "seed_data_creation": "None - no test credentials available",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "No test credentials in /app/memory/test_credentials.md. Could not test authenticated orders flow (order cards, filter tabs, order detail with real data). The critical GID routing issue means getOrder will likely return 404 for all real Shopify order IDs when called through the public URL. Must test with a logged-in user once auth credentials are available.",
+  "rca_of_issue": "GID Routing Bug RCA: Shopify order IDs are GIDs like 'gid://shopify/Order/6578435072167'. The frontend encodes this as 'gid%3A%2F%2Fshopify%2FOrder%2F6578435072167' via encodeURIComponent. The request goes to /api/auth/orders/gid%3A%2F%2Fshopify%2FOrder%2F6578435072167. The Kubernetes ingress NGINX decodes this path segment before proxying, turning %2F back to / and creating a multi-segment path that doesn't match the /api/auth/orders/{order_id} route. Fix: change backend route to use query param `GET /api/auth/orders?id=<encoded>` or use double-encoding (%252F), and update authRepository accordingly."
+}
