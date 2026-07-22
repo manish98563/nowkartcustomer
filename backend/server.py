@@ -18,6 +18,10 @@ from shopify_integration.router import router as shopify_router  # noqa: E402  (
 from auth.router import router as auth_router  # noqa: E402
 from auth.db import ensure_indexes  # noqa: E402
 from tracking.router import router as tracking_router  # noqa: E402
+from delivery.router import router as delivery_router  # noqa: E402
+from delivery.db import ensure_delivery_indexes  # noqa: E402
+from webhooks.router import router as webhooks_router  # noqa: E402
+from webhooks.db import ensure_webhook_indexes  # noqa: E402
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -62,6 +66,8 @@ app.include_router(api_router)
 app.include_router(shopify_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(tracking_router, prefix="/api")
+app.include_router(delivery_router, prefix="/api")
+app.include_router(webhooks_router, prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
@@ -84,5 +90,15 @@ async def shutdown_db_client():
 
 
 @app.on_event("startup")
-async def create_auth_indexes():
+async def startup_event():
+    # Auth indexes (existing)
     await ensure_indexes()
+    # Delivery module indexes
+    await ensure_delivery_indexes()
+    # Webhook module indexes
+    await ensure_webhook_indexes()
+    # Seed the default store if it doesn't exist yet
+    from delivery.service import get_default_store
+    store = await get_default_store()
+    logger.info("Default store ready: '%s' (id=%s)", store.get("name"), store.get("_id"))
+    logger.info("Now Kart backend startup complete — all indexes created")
