@@ -1,33 +1,82 @@
-import { Stack } from "expo-router";
-import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
-import { LogBox } from "react-native";
-
-import { useIconFonts } from "@/src/hooks/use-icon-fonts";
-
-
-// Disable logbox errors etc so that users can see the app
-// and agent works as expected.
-LogBox.ignoreAllLogs(true)
-
-// Keep the native splash visible from cold start until icon fonts register.
-// Required because @expo/vector-icons' componentDidMount fallback fires
-// Font.loadAsync against a broken vendor path if any <Icon> mounts before
-// the family is registered — which throws on Android Expo Go.
-SplashScreen.preventAutoHideAsync();
+import 'react-native-reanimated';
+import { Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { colors } from '@/src/theme';
+import { CartProvider } from '@/src/features/cart/CartContext';
+import { AuthProvider } from '@/src/features/auth/AuthContext';
+import { WishlistProvider } from '@/src/features/wishlist/WishlistContext';
 
 export default function RootLayout() {
-  const [loaded, error] = useIconFonts();
-
-  useEffect(() => {
-    if (loaded || error) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded, error]);
-
-  // If the CDN is unreachable we fall through on error rather than wedging
-  // the app — icons will tofu, but the app still boots.
-  if (!loaded && !error) return null;
-
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return (
+    <SafeAreaProvider>
+      <AuthProvider>
+        <WishlistProvider>
+          <CartProvider>
+            <StatusBar style="light" />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: colors.background.base },
+              }}
+            >
+              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen
+                name="cart"
+                options={{ presentation: 'card', animation: 'slide_from_bottom' }}
+              />
+              <Stack.Screen
+                name="search"
+                options={{ presentation: 'card', animation: 'slide_from_bottom' }}
+              />
+              <Stack.Screen
+                name="product/[handle]"
+                options={{ presentation: 'card', animation: 'slide_from_right' }}
+              />
+              <Stack.Screen
+                name="collection/[handle]"
+                options={{ presentation: 'card', animation: 'slide_from_right' }}
+              />
+              <Stack.Screen
+                name="profile"
+                options={{ presentation: 'card', animation: 'slide_from_right' }}
+              />
+              <Stack.Screen
+                name="wishlist"
+                options={{ presentation: 'card', animation: 'slide_from_right' }}
+              />
+              <Stack.Screen
+                name="addresses"
+                options={{ presentation: 'card', animation: 'slide_from_right' }}
+              />
+              <Stack.Screen
+                name="checkout/address"
+                options={{ presentation: 'card', animation: 'slide_from_right' }}
+              />
+              <Stack.Screen
+                name="checkout/webview"
+                options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom', gestureEnabled: false }}
+              />
+              <Stack.Screen
+                name="checkout/confirmation"
+                options={{ presentation: 'card', animation: 'fade', gestureEnabled: false }}
+              />
+              <Stack.Screen
+                name="auth/callback"
+                options={{ presentation: 'card', animation: 'fade' }}
+              />
+              <Stack.Screen
+                name="order/detail"
+                options={{ presentation: 'card', animation: 'slide_from_right' }}
+              />
+              <Stack.Screen
+                name="order/track"
+                options={{ presentation: 'card', animation: 'slide_from_right' }}
+              />
+            </Stack>
+          </CartProvider>
+        </WishlistProvider>
+      </AuthProvider>
+    </SafeAreaProvider>
+  );
 }
