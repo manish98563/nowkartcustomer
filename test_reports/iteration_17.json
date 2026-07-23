@@ -1,0 +1,41 @@
+{
+  "summary": "Iteration 17 — Rider Backend Platform comprehensive testing. All 38 tests pass covering: admin rider CRUD, rider auth (login/refresh/logout/rotation), profile, status, push token, job current/history, stats, assignment via admin and delivery router, soft delete, role isolation (customer JWT rejected), and regression (shopify home + webhook). One minor backend behavior noted: email uniqueness check in create_rider does not exclude soft-deleted riders.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/admin/riders",
+        "issue": "Email uniqueness check (service.py line 263) queries without `isDeleted: False` filter — a soft-deleted rider email cannot be re-used to create a new rider account (returns 409). This may be intentional for audit reasons but should be documented.",
+        "priority": "LOW"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_rider_backend_iteration17.py",
+    "/app/test_reports/pytest/pytest_iter17.xml"
+  ],
+  "action_items": [
+    "Clarify/document whether soft-deleted rider emails should be re-usable. Currently they cannot be (create returns 409). Consider adding `isDeleted: False` to the uniqueness check if re-use is desired."
+  ],
+  "critical_code_review_comments": [
+    "Admin endpoints are intentionally unauthenticated (documented TODO). Must be protected before production.",
+    "Delivery job status values are lowercase (e.g. 'assigned', 'pending_assignment') — consistent with DeliveryJobStatus enum. Documentation and test assertions should match lowercase."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_rider_backend_iteration17.py"
+  ],
+  "success_rate": {
+    "backend": "100% (38/38 passed)",
+    "frontend": "N/A — backend-only testing"
+  },
+  "seed_data_creation": "Created several TEST_ rider accounts and PENDING_ASSIGNMENT delivery jobs via webhook for testing. All cleaned up (riders soft-deleted by test suite).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 38 rider backend tests pass. Delivery job statuses are lowercase (pending_assignment, assigned, etc.). Email is stored lowercase. Assignment tests require PENDING_ASSIGNMENT jobs — create them via POST /api/webhooks/shopify before running. The test file test_rider_backend_iteration17.py uses unique timestamped emails per run for clean state."
+}

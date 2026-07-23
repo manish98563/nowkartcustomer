@@ -672,3 +672,97 @@ async def cancel_delivery_job_by_order_id(
         "webhook:orders/cancelled",
         reason,
     )
+
+
+
+# ─── Rider assignment (extended in Iteration 9) ───────────────────────────────
+
+async def assign_rider_to_job(
+    job_id: str,
+    rider_id: str,
+    actor: str = "admin",
+) -> "DeliveryJobOut":
+    """
+    Assign a rider to a delivery job and transition it to ASSIGNED.
+
+    Validates:
+      • Job must exist and be in PENDING_ASSIGNMENT status
+      • Rider must exist, be active, and not be soft-deleted
+
+    Side effects:
+      • delivery_jobs.assignedRiderId = rider ObjectId
+      • delivery_jobs.status = ASSIGNED
+      • delivery_jobs.assignedAt = now
+      • riders.status = BUSY  (non-atomic; acceptable for MVP)
+
+    Imports rider.db lazily to maintain clean module boundaries.
+    The delivery → rider dependency direction is explicitly approved in the
+    architecture document.
+    """
+    job = await _get_raw_by_id(job_id)
+    if not job:
+        raise DeliveryError("Delivery job not found.", 404)
+
+    if job.get("status") != DeliveryJobStatus.PENDING_ASSIGNMENT:
+        raise DeliveryError(
+            f"Cannot assign a rider to a job in status '{job.get('status')}'. "
+            "Job must be in PENDING_ASSIGNMENT status.",
+            409,
+        )
+
+    # Validate rider (lazy import — rider module may not be imported yet)
+    from rider.db import riders_collection as _riders_col
+    try:
+        rider_oid = ObjectId(rider_id)
+    except InvalidId:
+        raise DeliveryError("Invalid rider ID.", 400)
+
+    rider = await _riders_col.find_one({"_id": rider_oid, "isDeleted": False, "isActive": True})
+    if not rider:
+        raise DeliveryError("Rider not found or not active.", 404)
+
+    now = datetime.now(timezone.utc)
+    rider_name = f"{rider.get('firstName', '')} {rider.get('lastName', '')}".strip()
+
+    try:
+        oid = ObjectId(job_id)
+    except InvalidId:
+        raise DeliveryError("Invalid job ID.", 400)
+
+    new_event = {
+        "status":    DeliveryJobStatus.ASSIGNED,
+        "timestamp": now.isoformat(),
+        "actor":     actor,
+        "note":      f"Assigned to rider {rider_name}" if rider_name else "Rider assigned",
+        "location":  None,
+    }
+
+    updated = await delivery_jobs_collection.find_one_and_update(
+        {"_id": oid},
+        {
+            "$set": {
+                "status":          DeliveryJobStatus.ASSIGNED,
+                "assignedRiderId": rider_oid,
+                "assignedAt":      now,
+                "updatedAt":       now,
+            },
+            "$push": {
+                "recentEvents": {"$each": [new_event], "$slice": -50}
+            },
+        },
+        return_document=True,
+    )
+    if not updated:
+        raise DeliveryError("Failed to update delivery job.", 500)
+
+    # Set rider status to BUSY (non-atomic, best-effort)
+    await _riders_col.update_one(
+        {"_id": rider_oid},
+        {"$set": {"status": "busy", "updatedAt": now}},
+    )
+
+    logger.info(
+        "Job %s assigned to rider %s (%s) by %s",
+        job_id, rider_id, rider_name, actor,
+    )
+    return _to_full(updated)

@@ -29,6 +29,7 @@ from auth.dependencies import get_current_user_required
 
 from . import service
 from .schemas import (
+    DeliveryJobAssignIn,
     DeliveryJobCustomerOut,
     DeliveryJobOut,
     DeliveryJobStatus,
@@ -160,3 +161,21 @@ async def get_stores():
     TODO: Restrict to admin JWT when Admin Dashboard module is implemented.
     """
     return await service.get_all_stores()
+
+
+@router.post("/jobs/{jobId}/assign", response_model=DeliveryJobOut)
+async def assign_rider(jobId: str, body: DeliveryJobAssignIn):
+    """
+    Manually assign a rider to a delivery job.
+    The job must be in PENDING_ASSIGNMENT status.
+    Transitions the job to ASSIGNED and sets the rider status to BUSY.
+    TODO: Restrict to admin JWT when Admin Dashboard module is implemented.
+    """
+    try:
+        return await service.assign_rider_to_job(
+            job_id=jobId,
+            rider_id=body.riderId,
+            actor="admin",
+        )
+    except service.DeliveryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))

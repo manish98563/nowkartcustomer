@@ -179,3 +179,14 @@ class StoreOut(BaseModel):
     address:       StoreAddressOut
     settings:      StoreSettingsOut
     createdAt:     str
+
+
+# ─── Assignment request ───────────────────────────────────────────────────────
+
+class DeliveryJobAssignIn(BaseModel):
+    """
+    Request body for POST /api/delivery/jobs/{id}/assign.
+    Admin provides the riderId to assign to the job.
+    """
+    riderId: str
+    note:    Optional[str] = None
