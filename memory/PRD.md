@@ -54,7 +54,43 @@ FAILED_DELIVERY → CANCELLED
 
 ---
 
-## New API Routes (Iteration 8)
+### Iteration 9 — Rider Backend Platform (2026-07-23)
+
+#### What was built
+
+**New backend modules (8 files):**
+- `backend/rider/__init__.py`
+- `backend/rider/db.py` — riders + rider_refresh_tokens collections, indexes
+- `backend/rider/schemas.py` — RiderStatus/VehicleType enums, RiderOut, RiderAdminOut, RiderSessionOut, RiderCreateIn, RiderUpdateIn, DeliveryJobBriefOut, etc.
+- `backend/rider/security.py` — bcrypt password hashing, Rider JWT (role="rider"), refresh token helpers
+- `backend/rider/service.py` — full rider lifecycle: auth, CRUD, status, session, history, live stats
+- `backend/rider/router.py` — /api/rider/* rider-facing endpoints
+- `backend/rider/dependencies.py` — get_current_rider_required (rejects customer tokens via role check)
+- `backend/admin/__init__.py` — admin module scaffold
+- `backend/admin/rider_router.py` — /api/admin/riders/* admin CRUD endpoints
+
+**Modified files:**
+- `backend/server.py` — mounts rider_router + admin_router, adds ensure_rider_indexes to startup
+- `backend/.env` — adds RIDER_JWT_ACCESS_TOKEN_EXPIRE_MINUTES=240, RIDER_REFRESH_TOKEN_EXPIRE_DAYS=30
+- `backend/delivery/schemas.py` — adds DeliveryJobAssignIn schema
+- `backend/delivery/service.py` — adds assign_rider_to_job() function
+- `backend/delivery/router.py` — adds POST /api/delivery/jobs/{jobId}/assign endpoint
+
+#### New MongoDB Collections
+| Collection | Purpose |
+|---|---|
+| riders | One document per rider. isDeleted for soft delete. bcrypt passwordHash. |
+| rider_refresh_tokens | Opaque refresh tokens stored as SHA-256 hash. Same pattern as auth_refresh_tokens. |
+
+#### Auth Architecture (3-actor foundation)
+| Actor | Token | Expiry | Role Claim | Collection |
+|---|---|---|---|---|
+| Customer (existing) | JWT + opaque refresh | 15min / 30d | none | users + auth_refresh_tokens |
+| Rider (new) | JWT + opaque refresh | 4h / 30d | role="rider" | riders + rider_refresh_tokens |
+| Admin (future) | JWT + opaque refresh | 1h / 8h | role="admin" | admin_users (future) |
+
+#### Testing: 38/38 tests passed (test_rider_backend_iteration17.py)
+
 
 ### Delivery
 - `GET /api/delivery/job?orderId=` — customer views their delivery job (customer JWT required)
