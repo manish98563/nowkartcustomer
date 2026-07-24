@@ -1,30 +1,11 @@
 """
-Admin router — Rider management APIs for the future Admin Dashboard.
-
-All endpoints operate on the riders collection via rider.service.
-
-AUTHENTICATION:
-  No auth enforcement in this iteration — these endpoints are intentionally
-  unauthenticated to allow Admin Dashboard prototyping and Postman/Swagger testing
-  before the Admin JWT system is built.
-
-  TODO (Admin Dashboard iteration):
-    - Create backend/admin/security.py with admin JWT (role="admin"/"super_admin")
-    - Create backend/admin/dependencies.py with get_current_admin_required
-    - Add Depends(get_current_admin_required) to every endpoint below
-    - Apply store-scoped RBAC so "admin" role only sees their storeIds
-
-  SECURITY NOTE: These endpoints MUST be protected before production deployment.
-
-ASSIGNMENT:
-  POST /api/admin/riders/{riderId}/assign-job/{jobId}
-  Allows an admin to manually assign a rider to a pending delivery job.
-  This is the primary assignment mechanism in MVP (before auto-assignment).
+Admin Rider router — SECURED rider management.
+All endpoints require admin JWT authentication with appropriate RBAC.
 """
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from rider import service as rider_service
 from rider.schemas import (
@@ -34,55 +15,50 @@ from rider.schemas import (
     RiderUpdateIn,
 )
 from delivery import service as delivery_service
+from admin.dependencies import require_min_role
+from admin import service as admin_service
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(prefix="/admin", tags=["admin-riders"])
 
-
-# ─── Rider CRUD ───────────────────────────────────────────────────────────────
 
 @router.post("/riders", response_model=RiderAdminOut, status_code=201)
-async def create_rider(body: RiderCreateIn):
-    """
-    Create a new rider account.
-    Admin use only.  Returns the full rider detail including internal fields.
-    Returns 409 if the email already exists.
-    """
+async def create_rider(
+    body: RiderCreateIn,
+    admin: dict = Depends(require_min_role("admin")),
+):
+    """Create a new rider account. Requires admin role or higher."""
     try:
-        return await rider_service.create_rider(body)
+        result = await rider_service.create_rider(body)
+        await admin_service.log_action(
+            admin, "rider_created", "rider", result.id,
+            {"email": result.email, "name": f"{result.firstName} {result.lastName}"},
+        )
+        return result
     except rider_service.RiderError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
 
 @router.get("/riders", response_model=PaginatedRidersOut)
 async def list_riders(
-    status: Optional[str] = Query(default=None, description="Filter by status: online|offline|busy"),
-    isActive: Optional[bool] = Query(default=None, description="Filter by active/suspended"),
-    storeId: Optional[str] = Query(default=None, description="Filter by store ObjectId"),
-    includeDeleted: bool = Query(default=False, description="Include soft-deleted riders"),
+    status:         Optional[str]  = Query(default=None),
+    isActive:       Optional[bool] = Query(default=None),
+    storeId:        Optional[str]  = Query(default=None),
+    includeDeleted: bool           = Query(default=False),
     limit:  int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    admin: dict = Depends(require_min_role("support")),
 ):
-    """
-    Paginated list of all riders with optional filters.
-    TODO: Restrict to admin JWT when Admin Dashboard is implemented.
-    """
+    """List riders with optional filters. Requires support role or higher."""
     return await rider_service.list_riders(
-        status=status,
-        is_active=isActive,
-        store_id=storeId,
-        include_deleted=includeDeleted,
-        limit=limit,
-        offset=offset,
+        status=status, is_active=isActive, store_id=storeId,
+        include_deleted=includeDeleted, limit=limit, offset=offset,
     )
 
 
 @router.get("/riders/{riderId}", response_model=RiderAdminOut)
-async def get_rider(riderId: str):
-    """
-    Full rider detail including internal fields (push token, platform OS, etc.).
-    TODO: Restrict to admin JWT when Admin Dashboard is implemented.
-    """
+async def get_rider(riderId: str, admin: dict = Depends(require_min_role("support"))):
+    """Full rider detail. Requires support role or higher."""
     try:
         return await rider_service.get_rider_admin_detail(riderId)
     except rider_service.RiderError as exc:
@@ -90,113 +66,97 @@ async def get_rider(riderId: str):
 
 
 @router.put("/riders/{riderId}", response_model=RiderAdminOut)
-async def update_rider(riderId: str, body: RiderUpdateIn):
-    """
-    Update rider fields — patch semantics (only provided fields are changed).
-    TODO: Restrict to admin JWT when Admin Dashboard is implemented.
-    """
+async def update_rider(
+    riderId: str, body: RiderUpdateIn,
+    admin: dict = Depends(require_min_role("admin")),
+):
+    """Update rider fields. Requires admin role or higher."""
     try:
-        return await rider_service.update_rider(riderId, body)
+        result = await rider_service.update_rider(riderId, body)
+        await admin_service.log_action(admin, "rider_updated", "rider", riderId, {})
+        return result
     except rider_service.RiderError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
 
 @router.put("/riders/{riderId}/activate", response_model=RiderAdminOut)
-async def activate_rider(riderId: str):
-    """
-    Re-activate a suspended rider account.
-    TODO: Restrict to admin JWT when Admin Dashboard is implemented.
-    """
+async def activate_rider(riderId: str, admin: dict = Depends(require_min_role("admin"))):
+    """Re-activate a suspended rider. Requires admin role or higher."""
     try:
-        return await rider_service.activate_rider(riderId)
+        result = await rider_service.activate_rider(riderId)
+        await admin_service.log_action(admin, "rider_activated", "rider", riderId, {})
+        return result
     except rider_service.RiderError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
 
 @router.put("/riders/{riderId}/suspend", response_model=RiderAdminOut)
-async def suspend_rider(riderId: str):
+async def suspend_rider(riderId: str, admin: dict = Depends(require_min_role("admin"))):
     """
-    Suspend a rider account.
-    Sets isActive=False, forces OFFLINE status, and revokes all active sessions
-    so the rider is immediately signed out.
-    TODO: Restrict to admin JWT when Admin Dashboard is implemented.
+    Suspend a rider. Sets isActive=False, forces OFFLINE, revokes all sessions.
+    Requires admin role or higher.
     """
     try:
-        return await rider_service.suspend_rider(riderId)
+        result = await rider_service.suspend_rider(riderId)
+        await admin_service.log_action(admin, "rider_suspended", "rider", riderId, {})
+        return result
     except rider_service.RiderError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
 
 @router.delete("/riders/{riderId}", status_code=204)
-async def delete_rider(riderId: str):
-    """
-    Soft-delete a rider account.
-    The document is retained for audit / delivery history.
-    Revokes all active sessions.
-    TODO: Restrict to admin JWT when Admin Dashboard is implemented.
-    """
+async def delete_rider(riderId: str, admin: dict = Depends(require_min_role("admin"))):
+    """Soft-delete a rider. Requires admin role or higher."""
     try:
         await rider_service.delete_rider(riderId)
+        await admin_service.log_action(admin, "rider_deleted", "rider", riderId, {})
     except rider_service.RiderError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
-
-# ─── Rider history ────────────────────────────────────────────────────────────
 
 @router.get("/riders/{riderId}/history")
 async def get_rider_history(
     riderId: str,
     limit:  int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    admin: dict = Depends(require_min_role("support")),
 ):
-    """
-    Admin view of a rider's delivery history (terminal jobs only).
-    TODO: Restrict to admin JWT when Admin Dashboard is implemented.
-    """
-    # Validate rider exists
+    """Rider delivery history. Requires support role or higher."""
     try:
         await rider_service.get_rider_admin_detail(riderId)
     except rider_service.RiderError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
-
     jobs, total = await rider_service.get_rider_job_history(riderId, limit, offset)
     return {"jobs": [j.model_dump() for j in jobs], "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/riders/{riderId}/stats")
-async def get_rider_stats(riderId: str):
-    """
-    Live delivery statistics for a specific rider.
-    TODO: Restrict to admin JWT when Admin Dashboard is implemented.
-    """
+async def get_rider_stats(riderId: str, admin: dict = Depends(require_min_role("support"))):
+    """Live rider delivery statistics. Requires support role or higher."""
     try:
-        await rider_service.get_rider_admin_detail(riderId)  # validate rider exists
+        await rider_service.get_rider_admin_detail(riderId)
     except rider_service.RiderError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    return (await rider_service.get_rider_live_stats(riderId)).model_dump()
 
-    stats = await rider_service.get_rider_live_stats(riderId)
-    return stats.model_dump()
-
-
-# ─── Rider assignment ─────────────────────────────────────────────────────────
 
 @router.post("/riders/{riderId}/assign-job/{jobId}")
-async def assign_job_to_rider(riderId: str, jobId: str):
+async def assign_job_to_rider(
+    riderId: str, jobId: str,
+    admin: dict = Depends(require_min_role("operations_manager")),
+):
     """
     Manually assign a rider to a delivery job.
-    The job must be in PENDING_ASSIGNMENT status.
-    Transitions the job to ASSIGNED and sets the rider to BUSY.
-
-    This is the primary assignment mechanism for MVP (before auto-assignment
-    based on GPS proximity is implemented in a future iteration).
-
-    TODO: Restrict to admin JWT when Admin Dashboard is implemented.
+    Job must be in PENDING_ASSIGNMENT or READY_FOR_PICKUP status.
+    Requires operations_manager role or higher.
     """
     try:
         job = await delivery_service.assign_rider_to_job(
-            job_id=jobId,
-            rider_id=riderId,
-            actor="admin",
+            job_id=jobId, rider_id=riderId, actor=f"admin:{admin['_id']}"
+        )
+        await admin_service.log_action(
+            admin, "rider_assigned_to_delivery", "delivery_job", jobId,
+            {"riderId": riderId},
         )
         return {"message": "Rider assigned successfully.", "job": job.model_dump()}
     except delivery_service.DeliveryError as exc:
