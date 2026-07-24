@@ -120,3 +120,31 @@ Before deploying to production:
 
 4. **Shopify Checkout Sheet Kit** (in Customer App)
    - Replaces WebView checkout with native Apple Pay / Google Pay
+
+
+---
+
+## How to Continue Development
+
+### Recommended Implementation Order
+
+```
+Vendor App  →  Rider App  →  Admin Dashboard
+     ↓               ↓               ↓
+  Maps Integration  Live GPS    Push Notifications
+     ↓               ↓               ↓
+    ETA Calculation  Auto Assignment  Inventory Integration
+```
+
+### Why This Order
+
+| Phase | Reason |
+|---|---|
+| **Vendor App first** | Operationally critical — orders cannot move past `WAITING_VENDOR` without it. Simpler app (no GPS), good starting point to validate the vendor API surface. |
+| **Rider App second** | Depends on vendor having accepted/prepared the order. Background GPS and camera permissions make it more complex — build after the simpler vendor flow is stable. |
+| **Admin Dashboard third** | Web app (React, not Expo), Google Maps JS SDK for live map. Depends on riders and vendors being operational to show meaningful data. |
+| **Maps + Live GPS** | Requires Redis (pub/sub) and WebSocket. Infrastructure addition — implement after all three apps are functional. |
+| **Push Notifications** | Push tokens are already stored on riders and vendors. Dispatch module can be added without changing any app UI. |
+| **ETA Calculation** | Google Distance Matrix API (server-side). Slot already prepared in `delivery_jobs.etaMinutes`. Add after GPS is live. |
+| **Auto Assignment** | 2dsphere index already exists on `rider_locations`. Implement once manual assignment workflow is proven stable. |
+| **Inventory Integration** | Shopify webhook + POS scanning. Most complex — do last, after MVP operations are verified end-to-end. |

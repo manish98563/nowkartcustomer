@@ -127,3 +127,48 @@ Never add state logic elsewhere.
 - Reference specific file paths when asking about bugs
 - When extending delivery states, say "I need to modify the state machine in delivery/service.py"
 - When building a new app (Rider/Vendor/Admin), create a **separate repository** — do not add frontend code here
+
+
+---
+
+## Starting a New AI Conversation
+
+Follow this protocol at the start of every session to avoid wasted context and incorrect assumptions.
+
+### Step 1 — Read CONTEXT.md first (always)
+
+```
+docs/CONTEXT.md
+```
+
+This single file gives you: project summary, what's built, what's not, architecture overview, auth model, current phase, and the critical rules. It takes under 5 minutes to read.
+
+### Step 2 — Read additional docs only when needed
+
+| You need to... | Read... |
+|---|---|
+| Work on the backend | [`SYSTEM_ARCHITECTURE.md`](SYSTEM_ARCHITECTURE.md) → [`API_GUIDE.md`](API_GUIDE.md) |
+| Add or change delivery states | [`BUSINESS_WORKFLOW.md`](BUSINESS_WORKFLOW.md) |
+| Build a new frontend app | [`DESIGN_SYSTEM.md`](DESIGN_SYSTEM.md) → [`API_GUIDE.md`](API_GUIDE.md) |
+| Understand what's left to build | [`PROJECT_HANDOVER.md`](PROJECT_HANDOVER.md) |
+| Check an architectural decision | [`DECISIONS.md`](DECISIONS.md) |
+
+Do not read all 12 documentation files upfront. Load on demand.
+
+### Step 3 — Do not request the full codebase unless necessary
+
+- Check `memory/PRD.md` for the current task list
+- Check `memory/test_credentials.md` for auth credentials
+- Read specific files only when they are directly relevant to the task
+- Use documentation as the primary source of truth before reading source code
+
+### Step 4 — Never redesign completed architecture
+
+The following are **locked** — do not propose changes to them without explicit user approval:
+
+- Delivery state machine (`delivery/service.py` — VALID_TRANSITIONS, STATUS_LABELS, TERMINAL_STATES)
+- Authentication system for any actor (customer, rider, vendor, admin)
+- Module dependency direction (see `SYSTEM_ARCHITECTURE.md`)
+- Frontend storage abstraction (`src/utils/storage/`)
+- Shopify as the commerce backend
+- Product card UI (square images, 2-line titles)
