@@ -1,0 +1,39 @@
+stateDiagram-v2
+    [*] --> WAITING_VENDOR : orders/paid webhook
+
+    WAITING_VENDOR --> VENDOR_ACCEPTED : vendor accepts
+    WAITING_VENDOR --> REJECTED : vendor rejects
+    WAITING_VENDOR --> CANCELLED : admin / Shopify cancel
+
+    VENDOR_ACCEPTED --> PREPARING : vendor starts prep
+    VENDOR_ACCEPTED --> CANCELLED
+
+    PREPARING --> READY_FOR_PICKUP : vendor marks ready
+    PREPARING --> CANCELLED
+
+    READY_FOR_PICKUP --> ASSIGNED : admin assigns rider directly
+    READY_FOR_PICKUP --> PENDING_ASSIGNMENT : enters rider queue
+    READY_FOR_PICKUP --> CANCELLED
+
+    PENDING_ASSIGNMENT --> ASSIGNED : rider assigned
+    PENDING_ASSIGNMENT --> CANCELLED
+
+    ASSIGNED --> AT_STORE : rider arrives at store
+    ASSIGNED --> PENDING_ASSIGNMENT : unassign/reassign
+    ASSIGNED --> CANCELLED
+
+    AT_STORE --> IN_TRANSIT : rider picks up order
+    AT_STORE --> CANCELLED
+
+    IN_TRANSIT --> ARRIVED : rider at customer door
+    IN_TRANSIT --> FAILED_DELIVERY : delivery attempt failed
+
+    ARRIVED --> DELIVERED : confirmed + proof of delivery
+    ARRIVED --> FAILED_DELIVERY
+
+    FAILED_DELIVERY --> PENDING_ASSIGNMENT : retry
+    FAILED_DELIVERY --> CANCELLED
+
+    DELIVERED --> [*]
+    CANCELLED --> [*]
+    REJECTED --> [*]
