@@ -1,31 +1,33 @@
 """
 Delivery service — business logic for the delivery job lifecycle.
 
-STATE MACHINE
-─────────────
-PENDING_ASSIGNMENT  →  ASSIGNED, CANCELLED
-ASSIGNED            →  AT_STORE, PENDING_ASSIGNMENT (unassign), CANCELLED
-AT_STORE            →  IN_TRANSIT, CANCELLED
-IN_TRANSIT          →  ARRIVED, FAILED_DELIVERY
-ARRIVED             →  DELIVERED, FAILED_DELIVERY
-DELIVERED           →  (terminal)
-FAILED_DELIVERY     →  PENDING_ASSIGNMENT (retry), CANCELLED
-CANCELLED           →  (terminal)
+STATE MACHINE (updated Iteration 10 — Vendor workflow added)
+─────────────────────────────────────────────────────────────
+WAITING_VENDOR    →  VENDOR_ACCEPTED, REJECTED (terminal), CANCELLED
+VENDOR_ACCEPTED   →  PREPARING, CANCELLED
+PREPARING         →  READY_FOR_PICKUP, CANCELLED
+READY_FOR_PICKUP  →  PENDING_ASSIGNMENT, ASSIGNED (direct), CANCELLED
+PENDING_ASSIGNMENT→  ASSIGNED, CANCELLED
+ASSIGNED          →  AT_STORE, PENDING_ASSIGNMENT (unassign), CANCELLED
+AT_STORE          →  IN_TRANSIT, CANCELLED
+IN_TRANSIT        →  ARRIVED, FAILED_DELIVERY  (cannot cancel mid-delivery)
+ARRIVED           →  DELIVERED, FAILED_DELIVERY
+DELIVERED         →  (terminal)
+FAILED_DELIVERY   →  PENDING_ASSIGNMENT (retry), CANCELLED
+CANCELLED         →  (terminal)
+REJECTED          →  (terminal)
+
+VENDOR WORKFLOW
+───────────────
+• Orders are created with WAITING_VENDOR status (not PENDING_ASSIGNMENT).
+• Rider assignment is only permitted from PENDING_ASSIGNMENT or READY_FOR_PICKUP.
+• Vendors can mark unavailable items at any active state via set_unavailable_items().
 
 CANCELLATION RULES
 ──────────────────
 • Jobs in IN_TRANSIT cannot be auto-cancelled — an alert event is added and
-  admin must intervene.  This prevents cancelling a live delivery mid-journey.
+  admin must intervene.
 • All other pre-terminal states accept cancellation.
-
-DESIGN NOTES
-────────────
-• DeliveryJob is fully independent of the Shopify Order.  The relationship is
-  maintained only through shopifyOrderId (a stored Shopify GID string).
-• The customer is linked via customerId (MongoDB ObjectId) for authenticated
-  shoppers, or via shopifyCustomerId/customerEmail for guests (both nullable).
-• No Google Maps calls in this iteration — coordinates and ETA fields are
-  reserved (None) ready for the ETA module in a future iteration.
 """
 import logging
 import os
@@ -55,6 +57,13 @@ logger = logging.getLogger(__name__)
 # ─── Business-logic constants ─────────────────────────────────────────────────
 
 STATUS_LABELS: dict[str, str] = {
+    # Vendor workflow
+    DeliveryJobStatus.WAITING_VENDOR:   "Waiting for Vendor",
+    DeliveryJobStatus.VENDOR_ACCEPTED:  "Vendor Accepted",
+    DeliveryJobStatus.PREPARING:        "Preparing Order",
+    DeliveryJobStatus.READY_FOR_PICKUP: "Ready for Pickup",
+    DeliveryJobStatus.REJECTED:         "Order Rejected",
+    # Rider workflow
     DeliveryJobStatus.PENDING_ASSIGNMENT: "Awaiting Rider",
     DeliveryJobStatus.ASSIGNED:           "Rider Assigned",
     DeliveryJobStatus.AT_STORE:           "Rider at Store",
@@ -67,6 +76,27 @@ STATUS_LABELS: dict[str, str] = {
 
 # key = current status, value = list of valid next statuses
 VALID_TRANSITIONS: dict[str, list[str]] = {
+    # ── Vendor workflow ──────────────────────────────────────────────────────
+    DeliveryJobStatus.WAITING_VENDOR: [
+        DeliveryJobStatus.VENDOR_ACCEPTED,
+        DeliveryJobStatus.REJECTED,
+        DeliveryJobStatus.CANCELLED,
+    ],
+    DeliveryJobStatus.VENDOR_ACCEPTED: [
+        DeliveryJobStatus.PREPARING,
+        DeliveryJobStatus.CANCELLED,
+    ],
+    DeliveryJobStatus.PREPARING: [
+        DeliveryJobStatus.READY_FOR_PICKUP,
+        DeliveryJobStatus.CANCELLED,
+    ],
+    DeliveryJobStatus.READY_FOR_PICKUP: [
+        DeliveryJobStatus.PENDING_ASSIGNMENT,   # vendor marked ready → awaiting rider queue
+        DeliveryJobStatus.ASSIGNED,             # admin directly assigns (shortcut)
+        DeliveryJobStatus.CANCELLED,
+    ],
+    DeliveryJobStatus.REJECTED:         [],     # terminal
+    # ── Rider workflow ───────────────────────────────────────────────────────
     DeliveryJobStatus.PENDING_ASSIGNMENT: [
         DeliveryJobStatus.ASSIGNED,
         DeliveryJobStatus.CANCELLED,
@@ -83,27 +113,33 @@ VALID_TRANSITIONS: dict[str, list[str]] = {
     DeliveryJobStatus.IN_TRANSIT: [
         DeliveryJobStatus.ARRIVED,
         DeliveryJobStatus.FAILED_DELIVERY,
-        # No CANCELLED here — in-transit jobs require admin override
+        # No CANCELLED — in-transit jobs require admin override
     ],
     DeliveryJobStatus.ARRIVED: [
         DeliveryJobStatus.DELIVERED,
         DeliveryJobStatus.FAILED_DELIVERY,
     ],
-    DeliveryJobStatus.DELIVERED:      [],   # terminal
+    DeliveryJobStatus.DELIVERED:       [],   # terminal
     DeliveryJobStatus.FAILED_DELIVERY: [
         DeliveryJobStatus.PENDING_ASSIGNMENT,   # retry
         DeliveryJobStatus.CANCELLED,
     ],
-    DeliveryJobStatus.CANCELLED:      [],   # terminal
+    DeliveryJobStatus.CANCELLED:       [],   # terminal
 }
 
 TERMINAL_STATES: frozenset[str] = frozenset({
     DeliveryJobStatus.DELIVERED,
     DeliveryJobStatus.CANCELLED,
+    DeliveryJobStatus.REJECTED,   # added Iteration 10
 })
 
 # State transitions that set a timing field on the delivery job document
 _TRANSITION_TIMESTAMPS: dict[str, str] = {
+    # Vendor workflow
+    DeliveryJobStatus.VENDOR_ACCEPTED:  "vendorAcceptedAt",
+    DeliveryJobStatus.PREPARING:        "preparingAt",
+    DeliveryJobStatus.READY_FOR_PICKUP: "readyForPickupAt",
+    # Rider workflow
     DeliveryJobStatus.ASSIGNED:    "assignedAt",
     DeliveryJobStatus.IN_TRANSIT:  "pickedUpAt",
     DeliveryJobStatus.ARRIVED:     "arrivedAt",
@@ -176,7 +212,7 @@ def _events(raw: list) -> list[DeliveryEventOut]:
 
 
 def _to_full(job: dict) -> DeliveryJobOut:
-    status = job.get("status", DeliveryJobStatus.PENDING_ASSIGNMENT)
+    status = job.get("status", DeliveryJobStatus.WAITING_VENDOR)
     return DeliveryJobOut(
         id=str(job["_id"]),
         shopifyOrderId=job["shopifyOrderId"],
@@ -206,13 +242,21 @@ def _to_full(job: dict) -> DeliveryJobOut:
         failureCount=int(job.get("failureCount", 0)),
         lastFailureReason=job.get("lastFailureReason"),
         recentEvents=_events(job.get("recentEvents") or []),
+        # Vendor fields (Iteration 10)
+        vendorId=_oid(job.get("vendorId")),
+        vendorAcceptedAt=_dt(job.get("vendorAcceptedAt")),
+        preparingAt=_dt(job.get("preparingAt")),
+        readyForPickupAt=_dt(job.get("readyForPickupAt")),
+        unavailableItems=job.get("unavailableItems") or [],
+        vendorNote=job.get("vendorNote"),
+        rejectionReason=job.get("rejectionReason"),
         createdAt=_dt(job.get("createdAt")) or "",
         updatedAt=_dt(job.get("updatedAt")) or "",
     )
 
 
 def _to_customer(job: dict) -> DeliveryJobCustomerOut:
-    status = job.get("status", DeliveryJobStatus.PENDING_ASSIGNMENT)
+    status = job.get("status", DeliveryJobStatus.WAITING_VENDOR)
     return DeliveryJobCustomerOut(
         id=str(job["_id"]),
         shopifyOrderId=job["shopifyOrderId"],
@@ -367,6 +411,18 @@ async def create_delivery_job_from_order(order_data: dict) -> DeliveryJobOut:
             "imageUrl":     None,   # REST webhook payload doesn't include image URLs
         })
 
+    # Resolve vendor for this store (lazy import — vendor module)
+    vendor_id: Optional[ObjectId] = None
+    try:
+        from vendor.db import vendors_collection as _vendors_col
+        vendor_doc = await _vendors_col.find_one(
+            {"storeId": store["_id"], "isDeleted": False, "isActive": True}
+        )
+        if vendor_doc:
+            vendor_id = vendor_doc["_id"]
+    except ImportError:
+        pass   # vendor module not yet available
+
     order_name = order_data.get("name") or f"#{order_data['id']}"
 
     job_doc = {
@@ -386,9 +442,19 @@ async def create_delivery_job_from_order(order_data: dict) -> DeliveryJobOut:
         "customerFirstName": (order_data.get("customer") or {}).get("first_name"),
         "customerLastName":  (order_data.get("customer") or {}).get("last_name"),
 
-        # Status
-        "status":         DeliveryJobStatus.PENDING_ASSIGNMENT,
+        # Status — WAITING_VENDOR is the new initial state (Iteration 10)
+        # Rider assignment is only permitted after READY_FOR_PICKUP
+        "status":         DeliveryJobStatus.WAITING_VENDOR,
         "assignedRiderId": None,
+
+        # Vendor (Iteration 10)
+        "vendorId":          vendor_id,
+        "vendorAcceptedAt":  None,
+        "preparingAt":       None,
+        "readyForPickupAt":  None,
+        "unavailableItems":  [],
+        "vendorNote":        None,
+        "rejectionReason":   None,
 
         # Addresses (denormalised snapshot — independent of Shopify after creation)
         "deliveryAddress": delivery_address,
@@ -413,19 +479,19 @@ async def create_delivery_job_from_order(order_data: dict) -> DeliveryJobOut:
         # Failure tracking
         "failureCount":      0,
         "lastFailureReason": None,
-        "retriedByJobId":    None,   # set if this job is a retry of another
-        "originalJobId":     None,   # set on the retry job, points back to original
+        "retriedByJobId":    None,
+        "originalJobId":     None,
 
         # Proof of delivery (populated by Rider App — future)
         "proofOfDelivery": None,
 
-        # Audit trail (last 50 events stored inline; overflow goes to a separate collection)
+        # Audit trail
         "recentEvents": [
             {
-                "status":    DeliveryJobStatus.PENDING_ASSIGNMENT,
+                "status":    DeliveryJobStatus.WAITING_VENDOR,
                 "timestamp": now.isoformat(),
                 "actor":     "webhook:orders/paid",
-                "note":      f"Order {order_name} paid via Shopify — delivery job created",
+                "note":      f"Order {order_name} paid via Shopify — delivery job created, awaiting vendor acceptance",
                 "location":  None,
             }
         ],
@@ -703,10 +769,10 @@ async def assign_rider_to_job(
     if not job:
         raise DeliveryError("Delivery job not found.", 404)
 
-    if job.get("status") != DeliveryJobStatus.PENDING_ASSIGNMENT:
+    if job.get("status") not in {DeliveryJobStatus.PENDING_ASSIGNMENT, DeliveryJobStatus.READY_FOR_PICKUP}:
         raise DeliveryError(
             f"Cannot assign a rider to a job in status '{job.get('status')}'. "
-            "Job must be in PENDING_ASSIGNMENT status.",
+            "Job must be in PENDING_ASSIGNMENT or READY_FOR_PICKUP status.",
             409,
         )
 
@@ -766,3 +832,108 @@ async def assign_rider_to_job(
         job_id, rider_id, rider_name, actor,
     )
     return _to_full(updated)
+
+
+# ─── Vendor-facing delivery functions (added Iteration 10) ───────────────────
+
+async def set_unavailable_items(
+    job_id: str,
+    vendor_id: str,
+    items: list,
+    vendor_note: Optional[str] = None,
+) -> "DeliveryJobOut":
+    """
+    Set / replace the unavailable items list on a delivery job.
+    Called by vendor when they cannot fulfil some items.
+
+    `items` is a list of dicts: [{itemTitle: str, reason: str | None}]
+    Validates that the job belongs to the requesting vendor.
+    Does NOT trigger a state transition — items can be updated at any active state.
+    """
+    job = await _get_raw_by_id(job_id)
+    if not job:
+        raise DeliveryError("Delivery job not found.", 404)
+
+    # Vendor ownership check
+    job_vendor_id = job.get("vendorId")
+    try:
+        vendor_oid = ObjectId(vendor_id)
+    except InvalidId:
+        raise DeliveryError("Invalid vendor ID.", 400)
+
+    if job_vendor_id != vendor_oid:
+        raise DeliveryError("This delivery job does not belong to your store.", 403)
+
+    if job.get("status") in TERMINAL_STATES:
+        raise DeliveryError("Cannot update a completed or cancelled job.", 409)
+
+    now = datetime.now(timezone.utc)
+    enriched_items = [
+        {
+            "itemTitle": item.get("itemTitle", ""),
+            "reason":    item.get("reason"),
+            "markedAt":  now.isoformat(),
+        }
+        for item in items
+    ]
+
+    update: dict = {
+        "$set": {
+            "unavailableItems": enriched_items,
+            "updatedAt":        now,
+        }
+    }
+    if vendor_note is not None:
+        update["$set"]["vendorNote"] = vendor_note
+
+    try:
+        oid = ObjectId(job_id)
+    except InvalidId:
+        raise DeliveryError("Invalid job ID.", 400)
+
+    updated = await delivery_jobs_collection.find_one_and_update(
+        {"_id": oid}, update, return_document=True
+    )
+    if not updated:
+        raise DeliveryError("Delivery job not found after update.", 404)
+
+    logger.info("Job %s unavailable items updated by vendor %s", job_id, vendor_id)
+    return _to_full(updated)
+
+
+async def get_jobs_for_vendor(
+    vendor_id: str,
+    active_only: bool = True,
+    limit: int = 50,
+    offset: int = 0,
+) -> "PaginatedJobsOut":
+    """
+    Return delivery jobs assigned to a vendor.
+    active_only=True returns only non-terminal jobs (the vendor order queue).
+    active_only=False returns all jobs (history).
+    """
+    try:
+        vendor_oid = ObjectId(vendor_id)
+    except InvalidId:
+        return PaginatedJobsOut(jobs=[], total=0, limit=limit, offset=offset)
+
+    query: dict = {"vendorId": vendor_oid}
+    if active_only:
+        query["status"] = {"$nin": list(TERMINAL_STATES)}
+    else:
+        query["status"] = {"$in": list(TERMINAL_STATES)}
+
+    total = await delivery_jobs_collection.count_documents(query)
+    cursor = (
+        delivery_jobs_collection.find(query)
+        .sort("createdAt", -1)
+        .skip(offset)
+        .limit(limit)
+    )
+    jobs = await cursor.to_list(limit)
+    return PaginatedJobsOut(
+        jobs=[_to_full(j) for j in jobs],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )

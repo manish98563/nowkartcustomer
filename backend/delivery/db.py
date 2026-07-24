@@ -41,6 +41,9 @@ async def ensure_delivery_indexes() -> None:
         [("storeId", 1), ("status", 1), ("createdAt", -1)]
     )
     await delivery_jobs_collection.create_index("assignedRiderId")
+    await delivery_jobs_collection.create_index(   # Iteration 10: vendor order queue
+        [("vendorId", 1), ("status", 1), ("createdAt", -1)]
+    )
 
     # stores
     await stores_collection.create_index("shopifyDomain")

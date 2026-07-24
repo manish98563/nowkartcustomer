@@ -24,7 +24,10 @@ from webhooks.router import router as webhooks_router  # noqa: E402
 from webhooks.db import ensure_webhook_indexes  # noqa: E402
 from rider.router import router as rider_router  # noqa: E402
 from rider.db import ensure_rider_indexes  # noqa: E402
-from admin.rider_router import router as admin_router  # noqa: E402
+from admin.rider_router import router as admin_rider_router  # noqa: E402
+from vendor.router import router as vendor_router  # noqa: E402
+from vendor.db import ensure_vendor_indexes  # noqa: E402
+from admin.vendor_router import router as admin_vendor_router  # noqa: E402
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -72,7 +75,9 @@ app.include_router(tracking_router, prefix="/api")
 app.include_router(delivery_router, prefix="/api")
 app.include_router(webhooks_router, prefix="/api")
 app.include_router(rider_router, prefix="/api")
-app.include_router(admin_router, prefix="/api")
+app.include_router(admin_rider_router, prefix="/api")
+app.include_router(vendor_router, prefix="/api")
+app.include_router(admin_vendor_router, prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
@@ -104,6 +109,8 @@ async def startup_event():
     await ensure_webhook_indexes()
     # Rider module indexes
     await ensure_rider_indexes()
+    # Vendor module indexes
+    await ensure_vendor_indexes()
     # Seed the default store if it doesn't exist yet
     from delivery.service import get_default_store
     store = await get_default_store()

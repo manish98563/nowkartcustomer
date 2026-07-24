@@ -21,6 +21,13 @@ from pydantic import BaseModel
 # ─── Status enum ──────────────────────────────────────────────────────────────
 
 class DeliveryJobStatus(str, Enum):
+    # ── Vendor workflow (new in Iteration 10) ─────────────────────────────────
+    WAITING_VENDOR   = "waiting_vendor"    # initial state — awaiting vendor acceptance
+    VENDOR_ACCEPTED  = "vendor_accepted"   # vendor accepted, reviewing items
+    PREPARING        = "preparing"         # vendor preparing items
+    READY_FOR_PICKUP = "ready_for_pickup"  # vendor done — rider can now be assigned
+    REJECTED         = "rejected"          # vendor rejected order (terminal)
+    # ── Rider workflow (existing) ─────────────────────────────────────────────
     PENDING_ASSIGNMENT = "pending_assignment"
     ASSIGNED           = "assigned"
     AT_STORE           = "at_store"
@@ -125,6 +132,14 @@ class DeliveryJobOut(BaseModel):
     failureCount:        int = 0
     lastFailureReason:   Optional[str] = None
     recentEvents:        List[DeliveryEventOut] = []
+    # ── Vendor fields (added in Iteration 10) ─────────────────────────────────
+    vendorId:            Optional[str] = None
+    vendorAcceptedAt:    Optional[str] = None
+    preparingAt:         Optional[str] = None
+    readyForPickupAt:    Optional[str] = None
+    unavailableItems:    List[dict] = []
+    vendorNote:          Optional[str] = None
+    rejectionReason:     Optional[str] = None
     createdAt:           str
     updatedAt:           str
 
