@@ -14,6 +14,7 @@ from .schemas import (
     AdminLogoutIn,
     AdminOut,
     AdminRefreshIn,
+    AdminRefreshOut,
     AdminSessionOut,
     AdminUpdateIn,
     AuditLogOut,
@@ -40,22 +41,26 @@ async def admin_login(body: AdminLoginIn):
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
 
-@router.post("/auth/refresh", response_model=AdminSessionOut)
+@router.post("/auth/refresh", response_model=AdminRefreshOut)
 async def admin_refresh(body: AdminRefreshIn):
     """Rotate admin refresh token. Old token is immediately invalidated."""
     try:
-        return await service.refresh_admin_session(body.refreshToken)
+        session = await service.refresh_admin_session(body.refreshToken)
+        return AdminRefreshOut(
+            accessToken=session.accessToken,
+            refreshToken=session.refreshToken,
+        )
     except service.AdminError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
 
 @router.post("/auth/logout", status_code=204)
-async def admin_logout(
-    body: AdminLogoutIn,
-    admin: dict = Depends(get_current_admin_required),
-):
-    """Revoke admin refresh token server-side."""
-    await service.logout_admin(body.refreshToken, admin)
+async def admin_logout(body: AdminLogoutIn):
+    """
+    Revoke admin refresh token server-side.
+    No access-token required — allows logout even when the access token has expired.
+    """
+    await service.logout_admin(body.refreshToken)
 
 
 # ─── Profile ──────────────────────────────────────────────────────────────────

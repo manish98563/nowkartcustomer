@@ -51,6 +51,12 @@ class AdminRefreshIn(BaseModel):
     refreshToken: str
 
 
+class AdminRefreshOut(BaseModel):
+    """Minimal refresh response — only the two tokens the Admin Dashboard reads."""
+    accessToken:  str
+    refreshToken: str
+
+
 class AdminLogoutIn(BaseModel):
     refreshToken: str
 

@@ -96,12 +96,13 @@ def _to_audit_out(log: dict) -> AuditLogOut:
 # ─── Startup seed ─────────────────────────────────────────────────────────────
 
 async def seed_default_admin() -> None:
-    """Create admin@nowkart.com (super_admin) if no admin accounts exist."""
+    """Create admin@nowkart.com (super_admin) and ops@nowkart.com (operations_manager)
+    if no admin accounts exist yet."""
     count = await admin_users_collection.count_documents({})
     if count > 0:
         return
     now = datetime.now(timezone.utc)
-    await admin_users_collection.insert_one(
+    await admin_users_collection.insert_many([
         {
             "email":        "admin@nowkart.com",
             "passwordHash": security.hash_password("Admin2026!"),
@@ -113,9 +114,21 @@ async def seed_default_admin() -> None:
             "lastLoginAt":  None,
             "createdAt":    now,
             "updatedAt":    now,
-        }
-    )
-    logger.info("Seeded default super admin: admin@nowkart.com")
+        },
+        {
+            "email":        "ops@nowkart.com",
+            "passwordHash": security.hash_password("Ops2026!!"),
+            "firstName":    "Operations",
+            "lastName":     "Manager",
+            "role":         AdminRole.OPERATIONS_MANAGER,
+            "isActive":     True,
+            "isDeleted":    False,
+            "lastLoginAt":  None,
+            "createdAt":    now,
+            "updatedAt":    now,
+        },
+    ])
+    logger.info("Seeded default admins: admin@nowkart.com (super_admin), ops@nowkart.com (operations_manager)")
 
 
 # ─── Internal lookup ──────────────────────────────────────────────────────────
