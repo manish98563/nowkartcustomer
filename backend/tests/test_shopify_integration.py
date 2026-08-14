@@ -14,7 +14,7 @@ import requests
 BASE_URL = os.environ.get('EXPO_BACKEND_URL').rstrip('/')
 API = f"{BASE_URL}/api"
 
-TOKEN = "REMOVED_SECRET"
+TOKEN = os.environ.get("SHOPIFY_STOREFRONT_ACCESS_TOKEN")
 
 
 @pytest.fixture(scope="module")
