@@ -86,3 +86,5 @@ android-sdk/
 credentials.json
 *.key
 .credentials
+# Allow frontend/.env — contains only EXPO_PUBLIC_* public vars (no secrets)
+!frontend/.env
