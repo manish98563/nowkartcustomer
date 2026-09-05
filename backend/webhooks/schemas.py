@@ -43,6 +43,7 @@ class ShopifyWebhookLineItem(BaseModel):
     quantity:      Optional[int] = 1
     price:         Optional[str] = "0"
     variant_title: Optional[str] = None
+    vendor:        Optional[str] = None   # Shopify product vendor — used for multi-vendor splitting
 
 
 class ShopifyOrderWebhookPayload(BaseModel):

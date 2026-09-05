@@ -28,16 +28,26 @@ CANCELLATION RULES
 • Jobs in IN_TRANSIT cannot be auto-cancelled — an alert event is added and
   admin must intervene.
 • All other pre-terminal states accept cancellation.
+
+MULTI-VENDOR ORCHESTRATION (Iteration 20)
+──────────────────────────────────────────
+• orchestrate_multi_vendor_order() is the single entry-point for orders/paid.
+• Line items are grouped by their Shopify vendor field (exact case-insensitive
+  match against vendors.businessName in NowKart).
+• If no vendor info is present → LEGACY mode (backward-compatible single job).
+• Unmapped vendors are NOT silently assigned; they are recorded in parent_order.
+• All processing is idempotent via parent_orders.shopifyOrderId unique index.
 """
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from bson import ObjectId
 from bson.errors import InvalidId
 
-from .db import delivery_jobs_collection, stores_collection
+from .db import delivery_jobs_collection, parent_orders_collection, stores_collection
 from .schemas import (
     DeliveryAddressOut,
     DeliveryEventOut,
@@ -937,3 +947,538 @@ async def get_jobs_for_vendor(
         limit=limit,
         offset=offset,
     )
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MULTI-VENDOR ORDER ORCHESTRATION  (Iteration 20)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def _lookup_vendor_by_name(vendor_name: str) -> Optional[dict]:
+    """
+    Exact case-insensitive lookup of a NowKart vendor by businessName.
+    Returns None if no active, non-deleted vendor matches.
+    Does NOT use fuzzy matching — only a full-string case-insensitive regex.
+    """
+    try:
+        from vendor.db import vendors_collection as _vendors_col
+        pattern = f"^{re.escape(vendor_name.strip())}$"
+        return await _vendors_col.find_one({
+            "businessName": {"$regex": pattern, "$options": "i"},
+            "isDeleted": False,
+            "isActive":  True,
+        })
+    except ImportError:
+        logger.error("vendor module not available — cannot look up vendor by name")
+        return None
+
+
+async def _get_store_for_vendor(vendor_doc: dict) -> Optional[dict]:
+    """Return the active store document linked to a vendor via storeId. None if unlinked."""
+    store_oid = vendor_doc.get("storeId")
+    if not store_oid:
+        return None
+    return await stores_collection.find_one({"_id": store_oid, "isActive": True})
+
+
+async def _create_delivery_job_for_vendor_group(
+    order_data: dict,
+    vendor_items: list,
+    store: dict,
+    vendor_doc: dict,
+    parent_order_id: ObjectId,
+) -> DeliveryJobOut:
+    """
+    Create ONE delivery job for a specific vendor's line items within a Shopify order.
+
+    Idempotent: re-calling for the same (shopifyOrderId, vendorId) pair returns
+    the existing job without modification.
+
+    Called exclusively by orchestrate_multi_vendor_order().
+    """
+    now = datetime.now(timezone.utc)
+    shopify_order_id = f"gid://shopify/Order/{order_data['id']}"
+    vendor_id = vendor_doc["_id"]
+
+    # Idempotency check via compound (shopifyOrderId, vendorId)
+    existing = await delivery_jobs_collection.find_one({
+        "shopifyOrderId": shopify_order_id,
+        "vendorId":        vendor_id,
+    })
+    if existing:
+        logger.info(
+            "Delivery job already exists for order %s vendor %s — idempotent return (id=%s)",
+            shopify_order_id, vendor_doc.get("businessName", ""), existing["_id"],
+        )
+        return _to_full(existing)
+
+    # Customer linkage
+    shopify_customer_id: Optional[str] = None
+    customer_id: Optional[ObjectId] = None
+    if order_data.get("customer") and order_data["customer"].get("id"):
+        shopify_customer_id = f"gid://shopify/Customer/{order_data['customer']['id']}"
+        from auth.db import users_collection
+        user = await users_collection.find_one({"shopifyCustomerId": shopify_customer_id})
+        if user:
+            customer_id = user["_id"]
+
+    # Delivery address snapshot
+    shipping = order_data.get("shipping_address") or {}
+    delivery_address = {
+        "firstName":   shipping.get("first_name", ""),
+        "lastName":    shipping.get("last_name", ""),
+        "line1":       shipping.get("address1", ""),
+        "line2":       shipping.get("address2") or "",
+        "city":        shipping.get("city", ""),
+        "province":    shipping.get("province") or "",
+        "postcode":    shipping.get("zip", ""),
+        "country":     shipping.get("country", ""),
+        "phone":       shipping.get("phone") or "",
+        "coordinates": None,
+    }
+
+    # Line-item snapshot (this vendor's items only) + per-vendor subtotal
+    order_items = []
+    vendor_total = 0.0
+    for item in vendor_items:
+        price = float(item.get("price", "0"))
+        qty   = int(item.get("quantity", 1))
+        vendor_total += price * qty
+        order_items.append({
+            "title":        item.get("title", ""),
+            "variantTitle": item.get("variant_title"),
+            "quantity":     qty,
+            "price":        price,
+            "imageUrl":     None,
+        })
+
+    order_name = order_data.get("name") or f"#{order_data['id']}"
+    vendor_name = vendor_doc.get("businessName", "")
+
+    job_doc = {
+        # Shopify linkage
+        "shopifyOrderId":   shopify_order_id,
+        "shopifyOrderName": order_name,
+        "shopifyNumericId": int(order_data["id"]),
+
+        # Parent order linkage (Iteration 20)
+        "parentOrderId": parent_order_id,
+
+        # Store & customer
+        "storeId":           store["_id"],
+        "customerId":        customer_id,
+        "shopifyCustomerId": shopify_customer_id,
+        "customerEmail": (
+            order_data.get("email")
+            or (order_data.get("customer") or {}).get("email")
+        ),
+        "customerFirstName": (order_data.get("customer") or {}).get("first_name"),
+        "customerLastName":  (order_data.get("customer") or {}).get("last_name"),
+
+        # Status
+        "status":          DeliveryJobStatus.WAITING_VENDOR,
+        "assignedRiderId": None,
+
+        # Vendor
+        "vendorId":          vendor_id,
+        "vendorAcceptedAt":  None,
+        "preparingAt":       None,
+        "readyForPickupAt":  None,
+        "unavailableItems":  [],
+        "vendorNote":        None,
+        "rejectionReason":   None,
+
+        # Addresses
+        "deliveryAddress": delivery_address,
+        "pickupAddress":   store.get("address", {}),
+
+        # Order snapshot (this vendor's items only)
+        "orderItems":   order_items,
+        "orderTotal":   round(vendor_total, 2),
+        "currencyCode": order_data.get("currency", "GBP"),
+        "deliveryInstructions": order_data.get("note"),
+
+        # ETA (future)
+        "estimatedDeliveryAt": None,
+        "etaMinutes":          None,
+
+        # Timing
+        "assignedAt":  None,
+        "pickedUpAt":  None,
+        "arrivedAt":   None,
+        "completedAt": None,
+
+        # Failure tracking
+        "failureCount":      0,
+        "lastFailureReason": None,
+        "retriedByJobId":    None,
+        "originalJobId":     None,
+        "proofOfDelivery":   None,
+
+        # Audit trail
+        "recentEvents": [
+            {
+                "status":    DeliveryJobStatus.WAITING_VENDOR,
+                "timestamp": now.isoformat(),
+                "actor":     "webhook:orders/paid",
+                "note": (
+                    f"Order {order_name} paid via Shopify — "
+                    f"vendor group '{vendor_name}' delivery job created, awaiting vendor acceptance"
+                ),
+                "location":  None,
+            }
+        ],
+
+        "createdAt": now,
+        "updatedAt": now,
+    }
+
+    result = await delivery_jobs_collection.insert_one(job_doc)
+    job_doc["_id"] = result.inserted_id
+    logger.info(
+        "Created vendor-group delivery job %s for order %s (vendor=%s)",
+        job_doc["_id"], shopify_order_id, vendor_name,
+    )
+    return _to_full(job_doc)
+
+
+async def orchestrate_multi_vendor_order(order_data: dict) -> dict:
+    """
+    Single entry-point for processing a Shopify orders/paid event.
+
+    MODES
+    ─────
+    LEGACY       — no `vendor` field in any line item
+                   → calls the existing create_delivery_job_from_order() for full
+                     backward compatibility; wraps result in a parent_order record.
+    SINGLE_VENDOR — all items carry the same Shopify vendor string and it maps to
+                     exactly one active NowKart vendor.
+    MULTI_VENDOR  — items from 2+ distinct Shopify vendor strings.
+
+    VENDOR MAPPING RULE
+    ───────────────────
+    Shopify line-item `vendor` field matched against `vendors.businessName` using
+    exact case-insensitive regex (^...$, i flag).  No fuzzy matching.
+    Unmatched vendors are recorded in `parent_orders.unmappedGroups`; no delivery
+    job is silently created for them.
+
+    IDEMPOTENCY
+    ───────────
+    Guarded by a unique index on parent_orders.shopifyOrderId — re-processing
+    the same Shopify order returns the stored result without side-effects.
+    Per-job idempotency uses the compound (shopifyOrderId, vendorId) unique index.
+    """
+    now = datetime.now(timezone.utc)
+    shopify_order_id = f"gid://shopify/Order/{order_data['id']}"
+
+    # ── Service-level idempotency ─────────────────────────────────────────────
+    existing_parent = await parent_orders_collection.find_one({"shopifyOrderId": shopify_order_id})
+    if existing_parent:
+        logger.info(
+            "Parent order already exists for %s (id=%s) — idempotent return",
+            shopify_order_id, existing_parent["_id"],
+        )
+        return _format_parent_order_result(existing_parent)
+
+    # ── Group line items by Shopify vendor string ─────────────────────────────
+    line_items = order_data.get("line_items") or []
+    vendor_groups: dict = {}  # Optional[str] → list[item]
+    for item in line_items:
+        raw = (item.get("vendor") or "").strip()
+        key = raw if raw else None
+        vendor_groups.setdefault(key, []).append(item)
+
+    has_any_vendor = any(k is not None for k in vendor_groups)
+
+    # ── LEGACY MODE ───────────────────────────────────────────────────────────
+    if not has_any_vendor:
+        # No vendor field in any line item → preserve existing single-job behavior
+        job = await create_delivery_job_from_order(order_data)
+        parent_doc = {
+            "shopifyOrderId":   shopify_order_id,
+            "shopifyOrderName": order_data.get("name") or f"#{order_data['id']}",
+            "shopifyNumericId": int(order_data["id"]),
+            "totalPrice":       float(order_data.get("total_price", 0)),
+            "currencyCode":     order_data.get("currency", "GBP"),
+            "customerEmail": (
+                order_data.get("email")
+                or (order_data.get("customer") or {}).get("email")
+            ),
+            "deliveryJobIds":  [ObjectId(job.id)],
+            "vendorGroups": [
+                {
+                    "shopifyVendorName": None,
+                    "vendorId":         None,
+                    "storeId":          None,
+                    "deliveryJobId":    ObjectId(job.id),
+                    "status":           "created_legacy",
+                }
+            ],
+            "unmappedGroups": [],
+            "mode":           "legacy",
+            "status":         "created",
+            "createdAt":      now,
+            "updatedAt":      now,
+        }
+        await parent_orders_collection.insert_one(parent_doc)
+        # Back-fill parentOrderId on the delivery job
+        await delivery_jobs_collection.update_one(
+            {"_id": ObjectId(job.id)},
+            {"$set": {"parentOrderId": parent_doc["_id"]}},
+        )
+        logger.info(
+            "Parent order %s created (legacy mode) for %s",
+            parent_doc["_id"], shopify_order_id,
+        )
+        return {
+            "action":        "delivery_job_created",   # backward-compatible key
+            "jobId":         job.id,
+            "orderId":       shopify_order_id,
+            "status":        job.status,
+            "parentOrderId": str(parent_doc["_id"]),
+            "mode":          "legacy",
+        }
+
+    # ── MULTI-VENDOR / EXPLICIT SINGLE-VENDOR MODE ────────────────────────────
+
+    # Insert parent_order immediately so it acts as a transaction guard.
+    # deliveryJobIds / vendorGroups are filled after job creation.
+    parent_doc = {
+        "shopifyOrderId":   shopify_order_id,
+        "shopifyOrderName": order_data.get("name") or f"#{order_data['id']}",
+        "shopifyNumericId": int(order_data["id"]),
+        "totalPrice":       float(order_data.get("total_price", 0)),
+        "currencyCode":     order_data.get("currency", "GBP"),
+        "customerEmail": (
+            order_data.get("email")
+            or (order_data.get("customer") or {}).get("email")
+        ),
+        "deliveryJobIds":  [],
+        "vendorGroups":    [],
+        "unmappedGroups":  [],
+        "mode":            "pending",
+        "status":          "pending",
+        "createdAt":       now,
+        "updatedAt":       now,
+    }
+    await parent_orders_collection.insert_one(parent_doc)
+    parent_oid = parent_doc["_id"]
+
+    created_jobs: list = []   # list of (DeliveryJobOut, shopify_vendor_name)
+    vendor_groups_log: list = []
+    unmapped_groups: list = []
+
+    # Items with no vendor field (when the order also has explicit-vendor items)
+    if None in vendor_groups:
+        no_vendor_items = vendor_groups[None]
+        unmapped_groups.append({
+            "shopifyVendorName": None,
+            "reason":            "no_vendor_field",
+            "itemCount":         len(no_vendor_items),
+            "itemTitles":        [i.get("title", "") for i in no_vendor_items],
+        })
+        logger.warning(
+            "Order %s has %d item(s) with no vendor field — skipped (no delivery job created)",
+            shopify_order_id, len(no_vendor_items),
+        )
+
+    # Items WITH explicit vendor string
+    for vendor_name, items in vendor_groups.items():
+        if vendor_name is None:
+            continue  # handled above
+
+        vendor_doc = await _lookup_vendor_by_name(vendor_name)
+        if not vendor_doc:
+            unmapped_groups.append({
+                "shopifyVendorName": vendor_name,
+                "reason":            "unmatched_vendor",
+                "itemCount":         len(items),
+                "itemTitles":        [i.get("title", "") for i in items],
+            })
+            vendor_groups_log.append({
+                "shopifyVendorName": vendor_name,
+                "vendorId":         None,
+                "storeId":          None,
+                "deliveryJobId":    None,
+                "status":           "unmatched",
+            })
+            logger.warning(
+                "Order %s: Shopify vendor '%s' not matched to any active NowKart vendor "
+                "(checked vendors.businessName exact case-insensitive) — no job created",
+                shopify_order_id, vendor_name,
+            )
+            continue
+
+        store = await _get_store_for_vendor(vendor_doc)
+        if not store:
+            unmapped_groups.append({
+                "shopifyVendorName": vendor_name,
+                "reason":            "no_active_store",
+                "itemCount":         len(items),
+                "itemTitles":        [i.get("title", "") for i in items],
+            })
+            vendor_groups_log.append({
+                "shopifyVendorName": vendor_name,
+                "vendorId":         vendor_doc["_id"],
+                "storeId":          None,
+                "deliveryJobId":    None,
+                "status":           "no_active_store",
+            })
+            logger.warning(
+                "Order %s: vendor '%s' (id=%s) has no active store — no job created",
+                shopify_order_id, vendor_name, vendor_doc["_id"],
+            )
+            continue
+
+        job = await _create_delivery_job_for_vendor_group(
+            order_data, items, store, vendor_doc, parent_oid
+        )
+        created_jobs.append((job, vendor_name))
+        vendor_groups_log.append({
+            "shopifyVendorName": vendor_name,
+            "vendorId":         vendor_doc["_id"],
+            "storeId":          store["_id"],
+            "deliveryJobId":    ObjectId(job.id),
+            "status":           "created",
+        })
+
+    # Determine final status and mode
+    n_created = len(created_jobs)
+    n_unmapped = len(unmapped_groups)
+    if n_created == 0 and n_unmapped > 0:
+        final_status = "failed"
+    elif n_unmapped > 0:
+        final_status = "partial"
+    else:
+        final_status = "created"
+
+    final_mode = "single_vendor" if n_created == 1 else "multi_vendor"
+
+    # Finalise parent_order record
+    job_oids = [ObjectId(j.id) for j, _ in created_jobs]
+    await parent_orders_collection.update_one(
+        {"_id": parent_oid},
+        {
+            "$set": {
+                "deliveryJobIds": job_oids,
+                "vendorGroups":   vendor_groups_log,
+                "unmappedGroups": unmapped_groups,
+                "mode":           final_mode,
+                "status":         final_status,
+                "updatedAt":      now,
+            }
+        },
+    )
+    logger.info(
+        "Parent order %s finalised: mode=%s status=%s jobs=%d unmapped=%d",
+        parent_oid, final_mode, final_status, n_created, n_unmapped,
+    )
+
+    return {
+        "action":         "delivery_jobs_created",
+        "parentOrderId":  str(parent_oid),
+        "jobs": [
+            {"jobId": j.id, "vendorName": vn, "status": j.status}
+            for j, vn in created_jobs
+        ],
+        "orderId":        shopify_order_id,
+        "unmappedGroups": unmapped_groups,
+        "mode":           final_mode,
+        "status":         final_status,
+    }
+
+
+def _format_parent_order_result(parent: dict) -> dict:
+    """Reconstruct orchestration result from a stored parent_order (idempotent re-delivery)."""
+    mode = parent.get("mode", "legacy")
+    if mode == "legacy":
+        job_oids = parent.get("deliveryJobIds", [])
+        return {
+            "action":        "delivery_job_created",
+            "jobId":         str(job_oids[0]) if job_oids else None,
+            "orderId":       parent["shopifyOrderId"],
+            "status":        "already_processed",
+            "parentOrderId": str(parent["_id"]),
+            "mode":          "legacy",
+        }
+    vg_log = parent.get("vendorGroups", [])
+    return {
+        "action":         "delivery_jobs_created",
+        "parentOrderId":  str(parent["_id"]),
+        "jobs": [
+            {
+                "jobId":      str(vg.get("deliveryJobId", "")),
+                "vendorName": vg.get("shopifyVendorName"),
+                "status":     vg.get("status", ""),
+            }
+            for vg in vg_log
+            if vg.get("deliveryJobId") is not None
+        ],
+        "orderId":        parent["shopifyOrderId"],
+        "unmappedGroups": parent.get("unmappedGroups", []),
+        "mode":           mode,
+        "status":         parent.get("status", ""),
+    }
+
+
+async def cancel_all_delivery_jobs_by_order_id(
+    shopify_order_id: str,
+    reason: str = "Cancelled via Shopify",
+) -> list:
+    """
+    Cancel ALL delivery jobs for a Shopify order (handles multi-vendor orders).
+    Returns list of DeliveryJobOut — one per job found.
+    Jobs in terminal states are returned unchanged.
+    IN_TRANSIT jobs receive a warning event but are NOT cancelled.
+    """
+    jobs = await delivery_jobs_collection.find(
+        {"shopifyOrderId": shopify_order_id}
+    ).to_list(100)
+
+    if not jobs:
+        logger.info("No delivery jobs found for order %s — nothing to cancel.", shopify_order_id)
+        return []
+
+    results = []
+    for job in jobs:
+        current = job.get("status")
+        job_id  = str(job["_id"])
+
+        if current in TERMINAL_STATES:
+            logger.info("Job %s already in terminal state '%s' — skipping cancel.", job_id, current)
+            results.append(_to_full(job))
+            continue
+
+        if current == DeliveryJobStatus.IN_TRANSIT:
+            now = datetime.now(timezone.utc)
+            alert_event = {
+                "status":    current,
+                "timestamp": now.isoformat(),
+                "actor":     "webhook:orders/cancelled",
+                "note": (
+                    "ALERT: Shopify order cancelled while rider is IN TRANSIT. "
+                    "Admin intervention required — do not auto-cancel."
+                ),
+                "location":  None,
+            }
+            await delivery_jobs_collection.update_one(
+                {"_id": job["_id"]},
+                {
+                    "$push": {"recentEvents": {"$each": [alert_event], "$slice": -50}},
+                    "$set":  {"updatedAt": now},
+                },
+            )
+            logger.warning(
+                "ALERT: Order %s cancelled by Shopify but job %s is IN_TRANSIT.",
+                shopify_order_id, job_id,
+            )
+            refreshed = await delivery_jobs_collection.find_one({"_id": job["_id"]})
+            results.append(_to_full(refreshed))
+            continue
+
+        cancelled = await update_job_status(
+            job_id, DeliveryJobStatus.CANCELLED, "webhook:orders/cancelled", reason
+        )
+        results.append(cancelled)
+
+    return results

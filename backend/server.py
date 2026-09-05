@@ -19,7 +19,7 @@ from auth.router import router as auth_router  # noqa: E402
 from auth.db import ensure_indexes  # noqa: E402
 from tracking.router import router as tracking_router  # noqa: E402
 from delivery.router import router as delivery_router  # noqa: E402
-from delivery.db import ensure_delivery_indexes  # noqa: E402
+from delivery.db import ensure_delivery_indexes, ensure_parent_order_indexes  # noqa: E402
 from webhooks.router import router as webhooks_router  # noqa: E402
 from webhooks.db import ensure_webhook_indexes  # noqa: E402
 from rider.router import router as rider_router  # noqa: E402
@@ -114,6 +114,8 @@ async def startup_event():
     await ensure_indexes()
     # Delivery module indexes
     await ensure_delivery_indexes()
+    # Parent order indexes (Iteration 20: multi-vendor orchestration)
+    await ensure_parent_order_indexes()
     # Webhook module indexes
     await ensure_webhook_indexes()
     # Rider module indexes

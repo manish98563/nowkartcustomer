@@ -21,8 +21,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from delivery.service import (
-    cancel_delivery_job_by_order_id,
-    create_delivery_job_from_order,
+    cancel_all_delivery_jobs_by_order_id,
+    orchestrate_multi_vendor_order,
 )
 
 from .db import webhook_events_collection
@@ -97,22 +97,23 @@ async def process_webhook(topic: str, webhook_id: str, payload: dict) -> dict:
 
 async def _handle_order_paid(webhook_id: str, payload: dict) -> dict:
     """
-    orders/paid → create a delivery job.
+    orders/paid → orchestrate delivery job(s).
+    Delegates to orchestrate_multi_vendor_order() which handles:
+      - LEGACY mode  (no vendor fields)   → single delivery job, backward-compatible response
+      - SINGLE_VENDOR / MULTI_VENDOR mode → one job per matched vendor, new response shape
     """
     shopify_order_id = f"gid://shopify/Order/{payload.get('id', 'unknown')}"
     try:
-        job = await create_delivery_job_from_order(payload)
+        result = await orchestrate_multi_vendor_order(payload)
         await mark_processed(webhook_id)
         logger.info(
-            "orders/paid %s processed → delivery job %s created (order=%s)",
-            webhook_id, job.id, shopify_order_id,
+            "orders/paid %s processed → mode=%s status=%s (order=%s)",
+            webhook_id,
+            result.get("mode", "?"),
+            result.get("status", result.get("action", "?")),
+            shopify_order_id,
         )
-        return {
-            "action":  "delivery_job_created",
-            "jobId":   job.id,
-            "orderId": shopify_order_id,
-            "status":  job.status,
-        }
+        return result
     except Exception as exc:
         err = f"{type(exc).__name__}: {exc}"
         logger.error("Error processing orders/paid webhook %s: %s", webhook_id, err)
@@ -122,29 +123,45 @@ async def _handle_order_paid(webhook_id: str, payload: dict) -> dict:
 
 async def _handle_order_cancelled(webhook_id: str, payload: dict) -> dict:
     """
-    orders/cancelled → cancel the delivery job if one exists.
+    orders/cancelled → cancel all delivery jobs for the order.
+    Handles multi-vendor orders where multiple jobs exist per Shopify order.
+    Single-job response is backward-compatible with pre-Iteration-20 consumers.
     """
     shopify_order_id = f"gid://shopify/Order/{payload.get('id', 'unknown')}"
     cancel_reason = payload.get("cancel_reason") or "Cancelled via Shopify"
     try:
-        job = await cancel_delivery_job_by_order_id(shopify_order_id, cancel_reason)
+        jobs = await cancel_all_delivery_jobs_by_order_id(shopify_order_id, cancel_reason)
         await mark_processed(webhook_id)
-        if job:
+        if not jobs:
+            logger.info(
+                "orders/cancelled %s processed → no delivery job found for order %s",
+                webhook_id, shopify_order_id,
+            )
+            return {"action": "no_job_found", "orderId": shopify_order_id}
+
+        if len(jobs) == 1:
+            # Backward-compatible single-job response
             logger.info(
                 "orders/cancelled %s processed → job %s updated to status=%s (order=%s)",
-                webhook_id, job.id, job.status, shopify_order_id,
+                webhook_id, jobs[0].id, jobs[0].status, shopify_order_id,
             )
             return {
                 "action":  "delivery_job_updated",
-                "jobId":   job.id,
-                "status":  job.status,
+                "jobId":   jobs[0].id,
+                "status":  jobs[0].status,
                 "orderId": shopify_order_id,
             }
+
+        # Multi-vendor response (2+ jobs cancelled)
         logger.info(
-            "orders/cancelled %s processed → no delivery job found for order %s",
-            webhook_id, shopify_order_id,
+            "orders/cancelled %s processed → %d jobs updated (order=%s)",
+            webhook_id, len(jobs), shopify_order_id,
         )
-        return {"action": "no_job_found", "orderId": shopify_order_id}
+        return {
+            "action":  "delivery_jobs_updated",
+            "jobs":    [{"jobId": j.id, "status": j.status} for j in jobs],
+            "orderId": shopify_order_id,
+        }
     except Exception as exc:
         err = f"{type(exc).__name__}: {exc}"
         logger.error("Error processing orders/cancelled webhook %s: %s", webhook_id, err)
