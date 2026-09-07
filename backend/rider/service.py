@@ -365,6 +365,31 @@ async def activate_rider(rider_id: str) -> RiderAdminOut:
     return _to_rider_admin_out(updated)
 
 
+async def restore_rider(rider_id: str) -> RiderAdminOut:
+    """
+    Admin: restore a soft-deleted rider.
+    Sets isDeleted=False, isActive=True, deletedAt=None.
+    Preserves all other rider fields (including passwordHash, stats, vehicle info, etc.).
+    Idempotent — safe to call on a rider that was never deleted.
+    """
+    try:
+        oid = ObjectId(rider_id)
+    except InvalidId:
+        raise RiderError("Invalid rider ID.", 400)
+
+    now = datetime.now(timezone.utc)
+    # Query WITHOUT isDeleted filter so soft-deleted riders are found
+    updated = await riders_collection.find_one_and_update(
+        {"_id": oid},
+        {"$set": {"isDeleted": False, "isActive": True, "deletedAt": None, "updatedAt": now}},
+        return_document=True,
+    )
+    if not updated:
+        raise RiderError("Rider not found.", 404)
+    logger.info("Rider %s restored (isDeleted→False, isActive→True)", rider_id)
+    return _to_rider_admin_out(updated)
+
+
 async def suspend_rider(rider_id: str) -> RiderAdminOut:
     """
     Admin: suspend a rider — sets isActive=False and forces offline status.

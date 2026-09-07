@@ -90,6 +90,21 @@ async def activate_rider(riderId: str, admin: dict = Depends(require_min_role("a
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
 
+@router.put("/riders/{riderId}/restore", response_model=RiderAdminOut)
+async def restore_rider(riderId: str, admin: dict = Depends(require_min_role("admin"))):
+    """
+    Restore a soft-deleted rider — sets isDeleted=False, isActive=True, deletedAt=null.
+    Idempotent: safe to call on a rider that is already active.
+    Requires admin role or higher.
+    """
+    try:
+        result = await rider_service.restore_rider(riderId)
+        await admin_service.log_action(admin, "rider_restored", "rider", riderId, {})
+        return result
+    except rider_service.RiderError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
 @router.put("/riders/{riderId}/suspend", response_model=RiderAdminOut)
 async def suspend_rider(riderId: str, admin: dict = Depends(require_min_role("admin"))):
     """
