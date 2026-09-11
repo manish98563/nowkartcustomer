@@ -1,8 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { View, ScrollView, StyleSheet } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { colors, spacing } from '@/src/theme';
 import {

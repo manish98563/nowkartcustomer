@@ -4,7 +4,7 @@ import { colors, radius } from '@/src/theme';
 
 interface SkeletonBlockProps {
   width?: number | string;
-  height?: number;
+  height?: number | string;
   borderRadius?: number;
   style?: ViewStyle;
 }
@@ -32,7 +32,7 @@ export function SkeletonBlock({ width = '100%', height = 16, borderRadius: br = 
       testID="skeleton-block"
       style={[
         styles.base,
-        { width, height, borderRadius: br, opacity },
+        { width: width as number | `${number}%` | 'auto', height: height as number | `${number}%` | 'auto', borderRadius: br, opacity },
         style,
       ]}
     />

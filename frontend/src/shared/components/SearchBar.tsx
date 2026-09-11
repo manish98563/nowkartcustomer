@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { TextInput, StyleSheet } from 'react-native';
+import { TextInput, StyleSheet, ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, {
   useAnimatedStyle,
@@ -43,7 +43,7 @@ export function SearchBar({
 
   const animatedBorderStyle = useAnimatedStyle(() => ({
     borderColor: interpolateColor(focusProgress.value, [0, 1], ['transparent', colors.primary.main]),
-  }));
+  })) as ViewStyle;
 
   const content = (
     <>

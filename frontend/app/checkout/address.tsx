@@ -20,7 +20,7 @@ import { cartRepository, authRepository } from '@/src/repositories';
 import { ApiError } from '@/src/services/api/apiClient';
 import { Address, CheckoutPreparation, CartLine } from '@/src/types';
 
-const DELIVERY_FEE = 0; // Free delivery
+const DELIVERY_FEE: number = 0; // Free delivery
 
 export default function CheckoutAddressScreen() {
   const { cartId } = useLocalSearchParams<{ cartId: string }>();

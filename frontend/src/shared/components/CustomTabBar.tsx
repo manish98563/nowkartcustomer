@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { BottomTabBarProps } from 'expo-router/build/react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { colors, spacing } from '@/src/theme';
