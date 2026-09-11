@@ -152,6 +152,11 @@ class RiderUpdateIn(BaseModel):
     storeIds:      Optional[List[str]]      = None
 
 
+class RiderSetPasswordIn(BaseModel):
+    """Admin resets a rider's password. Only the new password is accepted."""
+    password: str
+
+
 class PaginatedRidersOut(BaseModel):
     riders: List[RiderAdminOut]
     total:  int

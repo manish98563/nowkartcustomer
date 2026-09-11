@@ -390,6 +390,43 @@ async def restore_rider(rider_id: str) -> RiderAdminOut:
     return _to_rider_admin_out(updated)
 
 
+async def set_rider_password(rider_id: str, new_password: str) -> RiderAdminOut:
+    """
+    Admin: reset a rider's password.
+
+    Validation: minimum 8 characters (mirrors create_rider rule).
+    Hashing:    rider/security.py::hash_password() — bcrypt via passlib.
+    Update:     ONLY passwordHash and updatedAt are written; every other
+                field is preserved exactly as-is.
+    Security:   plaintext password and the resulting hash are never logged,
+                returned, or stored anywhere other than riders.passwordHash.
+    Returns:    RiderAdminOut (never exposes passwordHash).
+    Raises:     RiderError(400) on weak password, RiderError(404) if not found.
+    """
+    if len(new_password) < 8:
+        raise RiderError("Password must be at least 8 characters.", 400)
+
+    try:
+        oid = ObjectId(rider_id)
+    except InvalidId:
+        raise RiderError("Invalid rider ID.", 400)
+
+    now = datetime.now(timezone.utc)
+    new_hash = security.hash_password(new_password)
+
+    updated = await riders_collection.find_one_and_update(
+        {"_id": oid, "isDeleted": False},
+        {"$set": {"passwordHash": new_hash, "updatedAt": now}},
+        return_document=True,
+    )
+    if not updated:
+        raise RiderError("Rider not found.", 404)
+
+    # Log only the event — never the password or the hash
+    logger.info("Password reset for rider %s by admin", rider_id)
+    return _to_rider_admin_out(updated)
+
+
 async def suspend_rider(rider_id: str) -> RiderAdminOut:
     """
     Admin: suspend a rider — sets isActive=False and forces offline status.

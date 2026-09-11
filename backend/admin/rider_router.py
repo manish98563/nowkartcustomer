@@ -12,6 +12,7 @@ from rider.schemas import (
     PaginatedRidersOut,
     RiderAdminOut,
     RiderCreateIn,
+    RiderSetPasswordIn,
     RiderUpdateIn,
 )
 from delivery import service as delivery_service
@@ -100,6 +101,27 @@ async def restore_rider(riderId: str, admin: dict = Depends(require_min_role("ad
     try:
         result = await rider_service.restore_rider(riderId)
         await admin_service.log_action(admin, "rider_restored", "rider", riderId, {})
+        return result
+    except rider_service.RiderError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+@router.put("/riders/{riderId}/set-password", response_model=RiderAdminOut)
+async def set_rider_password(
+    riderId: str,
+    body: RiderSetPasswordIn,
+    admin: dict = Depends(require_min_role("admin")),
+):
+    """
+    Reset a rider's password.
+    Only passwordHash and updatedAt are updated — all other fields preserved.
+    Password is never logged, returned, or stored in plaintext.
+    Requires admin role or higher.
+    """
+    try:
+        result = await rider_service.set_rider_password(riderId, body.password)
+        # Audit log records the event only — no password or hash in details
+        await admin_service.log_action(admin, "rider_password_reset", "rider", riderId, {})
         return result
     except rider_service.RiderError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
