@@ -170,3 +170,63 @@
 **Alternatives considered:** Platform.OS checks inline; separate storage utils per platform.
 
 **Status:** Accepted — violation causes white screen on web.
+
+---
+
+## ADR-015 · Multi-Vendor Order Orchestration via Fan-Out
+
+**Decision:** When a Shopify `orders/paid` webhook fires, create one delivery job per distinct vendor group found in the order's line items, linked to a single `parent_orders` record. Unmatched vendors are recorded in `parent_orders.unmappedGroups` and never silently assigned to a default vendor.
+
+**Reason:** A single Shopify order can contain items from multiple vendor stores. Assigning the whole order to one delivery job would require a single rider to service multiple stores — operationally wrong. Fan-out gives each vendor their own independent state machine and rider assignment.
+
+**Alternatives considered:** Single delivery job with multiple vendor stops; split orders client-side before checkout.
+
+**Backward compatibility:** Orders with no `vendor` field in any line item continue on the existing single-job path (legacy mode, fully regression-tested).
+
+**Implementation:** `backend/delivery/service.py::orchestrate_multi_vendor_order()` + `parent_orders` MongoDB collection with unique index on `shopifyOrderId` for idempotency.
+
+**Status:** Accepted — Iteration 20 (commit 3ef9237).
+
+---
+
+## ADR-016 · Railway as Production Deployment Platform
+
+**Decision:** Deploy the FastAPI backend to Railway using the Railpack builder. Production URL: `https://nowkartcustomer-production.up.railway.app`. A separate `backend/requirements.production.txt` contains only the slim set of dependencies needed for production (not the full Emergent dev environment freeze).
+
+**Reason:** Railway provides a straightforward Git-push deployment with Nixpacks/Railpack auto-detection, built-in health-check routing, and environment variable management — suitable for a FastAPI + Python 3.11 service without additional infrastructure configuration.
+
+**Alternatives considered:** Emergent built-in hosting; Render; Fly.io; Heroku.
+
+**Key files:** `Procfile`, `railway.json`, `nixpacks.toml`, `requirements.production.txt`, `runtime.txt` (Python 3.11).
+
+**Health-check:** `GET /api/` (unauthenticated root route).
+
+**Status:** Accepted — deployed (commits 91f22bc through 9b270c9).
+
+---
+
+## ADR-017 · EAS (Expo Application Services) for Native iOS/Android Builds
+
+**Decision:** Use EAS Build (via `frontend/eas.json`) for generating native iOS and Android builds. All EAS build profiles point to the Railway production backend URL. The `eas.json` approach supplements the Emergent platform's Publish button — developers may use either path.
+
+**Reason:** `eas.json` configuration is required for EAS CLI-based builds (used by CI/CD or direct developer workflows) and provides explicit control over build profiles and environment variable injection. The production backend URL is baked into the build via `env.EXPO_PUBLIC_BACKEND_URL` in each profile.
+
+**Alternatives considered:** Emergent Publish button only; custom Fastlane pipeline.
+
+**iOS submit stub:** `eas.json` includes a `submit.production.ios` section with placeholder Apple credentials (`REPLACE_WITH_*`) — fill in before first App Store submission.
+
+**Status:** Accepted — commit ac225f8.
+
+---
+
+## ADR-018 · Rider Soft-Delete Restore Endpoint
+
+**Decision:** Add `PUT /api/admin/riders/{riderId}/restore` rather than requiring admins to delete and recreate a rider. The restore endpoint sets `isDeleted=False`, `isActive=True`, `deletedAt=None` while preserving all other fields (including `passwordHash`).
+
+**Reason:** The existing soft-delete pattern (`isDeleted: true`) combined with a unique email index caused a 409 "email already exists" error when an admin tried to recreate a deleted rider. A restore endpoint is the idiomatic fix — it is also idempotent (safe to call on a rider that was never deleted) and preserves the rider's historical data.
+
+**Alternatives considered:** Hard-delete (destroys history); remove unique email constraint; allow duplicate emails for deleted riders.
+
+**RBAC:** Requires `admin` role (same level as `delete_rider` and `suspend_rider`).
+
+**Status:** Accepted — HEAD e5dc7c7.

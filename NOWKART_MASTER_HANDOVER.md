@@ -2,7 +2,7 @@
 
 **Document type:** Complete, zero-knowledge-transfer engineering handover.
 **Audience:** A brand-new AI engineer or human developer with NO prior access to this project's conversation history.
-**Last updated:** Iteration 7 (Live Order Tracking & Delivery Foundation) code is complete and verified. Iterations 5–7 added: checkout completion (Shopify hosted checkout via WebView), order management (full order history + detail), delivery address pre-population, and a tracking module with architecture prep for the future Rider App. **Real end-to-end Shopify Customer Account OAuth login on a native iOS/Android build has NOT been performed or verified** — this boundary applies to all auth-gated features.
+**Last updated:** HEAD e5dc7c7 — Rider restore endpoint complete. Iterations 1–20 complete, Railway production deployment live, EAS iOS/Android build configuration in place, multi-vendor order orchestration (parent_orders fan-out) implemented. The document body from Iterations 1–7 remains accurate for those sections; sections covering the backend platform (Iterations 8–20), deployment, and next tasks have been updated to reflect HEAD. **Real end-to-end Shopify Customer Account OAuth login on a native iOS/Android build has NOT been performed or verified** — this boundary applies to all auth-gated features.
 **Companion documents:** `PROJECT_MEMORY.md` (long-term memory/philosophy), `DEVELOPER_PLAYBOOK.md` (practical day-to-day guide). All three documents are cross-consistent as of this update; re-verify against the live codebase before trusting any specific claim if substantial time has passed since this line was written.
 
 > Wherever this document states something that was not explicitly confirmed by the user/testing evidence, it is explicitly marked **[ASSUMPTION]**.
@@ -27,13 +27,14 @@ Based on all iterations planned and discussed to date, the intended end-state pr
 2. Passwordless customer authentication + address management + checkout preparation — **DONE**.
 3. Native checkout completion via Shopify hosted checkout (WebView) + payments — **Implemented (WebView checkout complete; Shopify Checkout Sheet Kit / Apple Pay / Google Pay not yet integrated)**.
 4. Order placement, order history, live order tracking — **Implemented (order history, order detail, order tracking screen with auto-refresh all complete; Implemented — untested boundary for real order data, requires native build)**.
-5. A separate **Rider App** for delivery personnel — **NOT STARTED**. Architecture prep exists in `backend/tracking/` (extension points documented).
-6. A separate **Merchant Dashboard** for the grocery store/merchant — **NOT STARTED, NOT DESIGNED**.
-7. A separate **Admin Dashboard** for platform-level operations — **NOT STARTED, NOT DESIGNED**.
-8. Production deployment to the Apple App Store and Google Play Store — **NOT STARTED**.
+5. A separate **Rider App** for delivery personnel — **Backend complete (Iteration 9); frontend NOT STARTED (separate Expo repo)**.
+6. A separate **Vendor App** for grocery store vendors — **Backend complete (Iteration 10); frontend NOT STARTED (separate Expo repo)**.
+7. A separate **Admin Dashboard** for platform-level operations — **Backend complete (Iteration 11); frontend NOT STARTED (separate React+Vite repo)**.
+8. Production deployment — **Railway deployment live** (`nowkartcustomer-production.up.railway.app`); iOS/Android builds configured via `frontend/eas.json`.
+9. Production App Store / Google Play release — **NOT STARTED**.
 
 ### Overall Architecture (one paragraph)
-Now Kart is a three-tier system: **(1) Expo/React Native frontend** (file-based routing via `expo-router`) that never talks to Shopify directly; **(2) a FastAPI backend** acting as a Backend-For-Frontend (BFF) that is the *only* component allowed to hold Shopify credentials and talk to Shopify's Storefront GraphQL API (catalog/cart) and Customer Account API (OAuth/auth/profile/addresses); **(3) MongoDB** for Now Kart's own user/session records (never for product data — that always comes live from Shopify). The frontend authenticates against Now Kart's *own* backend-issued session (JWT + rotating refresh token), never holding a real Shopify token on-device.
+Now Kart is a three-tier system: **(1) Expo/React Native frontend** (file-based routing via `expo-router`) that never talks to Shopify directly; **(2) a FastAPI backend** acting as a Backend-For-Frontend (BFF) that is the *only* component allowed to hold Shopify credentials and talk to Shopify's Storefront GraphQL API (catalog/cart) and Customer Account API (OAuth/auth/profile/addresses); **(3) MongoDB** for Now Kart's own operational data (users, sessions, delivery jobs, riders, vendors, admins — never for product data, which always comes live from Shopify). The backend is deployed on Railway (`nowkartcustomer-production.up.railway.app`). The frontend authenticates against Now Kart's own backend-issued session (JWT + rotating refresh token), never holding a real Shopify token on-device. Four distinct actor types each have their own JWT role and token lifetimes: Customer (Shopify OAuth, no role claim, 15 min), Rider (`role="rider"`, 4 h), Vendor (`role="vendor"`, 8 h), Admin (`role="super_admin"` etc., 1 h).
 
 ### Current Completion Percentage **[ASSUMPTION — no official %, this is an engineering estimate]**
 Estimated **~60%** of the full long-term vision (all 8 items above). Within the "customer shopping app" scope (items 1–4), completion is **~98%** — the remaining 2% is native OAuth verification and Shopify Checkout Sheet Kit / Apple Pay integration.
@@ -162,13 +163,17 @@ Dark, premium, "quick-commerce" aesthetic: near-black background (`#0B0710`), vi
 - **Animation:** `react-native-reanimated` 4.1.1 (+ `react-native-worklets`) for press-scale (`AnimatedPressable`), fade/zoom-in on error/empty states, skeleton shimmer.
 
 ### Backend
-- **Framework:** FastAPI 0.110.1 (Python), running via `uvicorn` with `watchfiles` auto-reload in dev, bound to `0.0.0.0:8001` (managed by supervisor, never change this binding).
-- **Structure:** `server.py` is the FastAPI app entrypoint — it loads `.env`, connects to MongoDB, mounts four routers: a legacy generic `/api` status-check router, `shopify_router` (`/api/shopify/*`), `auth_router` (`/api/auth/*`), and `tracking_router` (`/api/tracking/*`). CORS is currently wide open — known P3 hardening item.
-- **Three clean bounded modules:**
-  - `backend/shopify_integration/` — Shopify Storefront GraphQL API (catalog, collections, search, cart, checkout-prep with delivery address pre-population).
+- **Framework:** FastAPI 0.110.1 (Python), running via `uvicorn` with `watchfiles` auto-reload in dev, bound to `0.0.0.0:8001` (managed by supervisor, never change this binding). In production, Railway uses `python3 -m uvicorn server:app --host 0.0.0.0 --port $PORT` via `Procfile`/`railway.json`.
+- **Structure:** `server.py` is the FastAPI app entrypoint — it loads `.env`, connects to MongoDB, and mounts **15 routers**: a legacy generic `/api` status-check router, `shopify_router` (`/api/shopify/*`), `auth_router` (`/api/auth/*`), `tracking_router` (`/api/tracking/*`), `delivery_router` (`/api/delivery/*`), `webhooks_router` (`/api/webhooks/*`), `rider_router` (`/api/rider/*`), `vendor_router` (`/api/vendor/*`), plus six `admin/` sub-routers (`/api/admin/auth`, `/api/admin/riders`, `/api/admin/vendors`, `/api/admin/dashboard`, `/api/admin/stores`, `/api/admin/delivery`). CORS is currently wide open — known P3 hardening item.
+- **Eight clean bounded modules:**
+  - `backend/shopify_integration/` — Shopify Storefront GraphQL API (catalog, collections, search, cart, checkout-prep).
   - `backend/auth/` — Shopify Customer Account API (OAuth2+PKCE, sessions, profile, addresses, order detail).
-  - `backend/tracking/` — Order tracking derived from Shopify fulfillment data; architecture prep for Rider App (`riderLocation`, `riderEta` extension points commented in `schemas.py`).
-- These modules have a one-directional import: `shopify_integration.router` imports `auth.service`/`auth.dependencies`; `tracking.service` imports `auth.service`; `auth` never imports from `shopify_integration` or `tracking`.
+  - `backend/tracking/` — Order tracking derived from Shopify fulfillment data; Rider App extension points.
+  - `backend/delivery/` — Delivery job state machine, multi-vendor orchestration (`parent_orders` fan-out), `delivery_jobs`/`stores`/`parent_orders` collections.
+  - `backend/webhooks/` — Shopify `orders/paid` / `orders/cancelled` ingestion with HMAC-SHA256 verification.
+  - `backend/rider/` — Rider auth (bcrypt+JWT, `role="rider"`), CRUD, job ops, stats, soft-delete/restore.
+  - `backend/vendor/` — Vendor auth (bcrypt+JWT, `role="vendor"`), order queue, accept/reject/prepare/ready workflow.
+  - `backend/admin/` — Admin auth (bcrypt+JWT, `role="super_admin"|"admin"|"operations_manager"|"support"`), RBAC via `require_min_role()`, audit logs, all management endpoints.
 
 ### Shopify Integration (see Section 7 for full detail)
 - **Storefront API** (public catalog/cart) — accessed with a **private Storefront API token** (server-side only) via a thin async GraphQL client (`shopify_integration/client.py`).
@@ -195,20 +200,60 @@ Debounced live query against `/api/shopify/search?q=...`, using a Storefront que
 ### Checkout Foundation
 `/app/checkout/address.tsx` — no payment. Calls `POST /api/shopify/checkout/prepare` (validates live stock, attaches buyer identity), then lets a signed-in customer pick a saved address (guests are told they'll enter one at actual checkout), and shows a **disabled** "Continue to Payment" button with a "coming in a future update" message.
 
-### Future Rider App / Merchant Dashboard / Admin Dashboard
-**Not started, not designed, no code exists.** These would each most likely be **separate Expo/React Native (or web) applications** reusing the same FastAPI backend's future order/rider/merchant endpoints (none of which exist yet) and likely a shared or extended MongoDB schema. No architectural decisions have been made for these yet — treat as a clean slate when the user requests them.
+### Authentication Overview (4-actor model)
+
+| Actor | How they log in | JWT role claim | Access token | Refresh token |
+|---|---|---|---|---|
+| **Customer** | Shopify OAuth2 + PKCE (passwordless) | *(none)* | 15 min | 30 days |
+| **Rider** | email + bcrypt password | `role="rider"` | 4 h | 30 days |
+| **Vendor** | email + bcrypt password | `role="vendor"` | 8 h | 30 days |
+| **Admin** | email + bcrypt password | `role="super_admin"` / `"admin"` / `"operations_manager"` / `"support"` | 1 h | 8 h |
+
+All actors share one `JWT_SECRET_KEY`. Role claim in the JWT enforces endpoint isolation — rider tokens are explicitly rejected on customer/vendor/admin endpoints and vice versa.
+
+Admin RBAC: `super_admin(4) > admin(3) > operations_manager(2) > support(1)`. Permission checks use `require_min_role(level)` which compares the numeric hierarchy.
+
+Customer authentication uses the BFF+PKCE pattern described exhaustively in Section 8 — the customer never holds a Shopify token; Now Kart issues its own session. Rider/Vendor/Admin authentication uses standard bcrypt + JWT with the same rotating refresh-token + reuse-detection pattern applied to their respective collections.
 
 ### Database
 MongoDB (`motor` async driver). Database name from `DB_NAME` env var. Current collections:
-- `status_checks` — legacy pre-existing scaffold collection from the original template, not used by any real Now Kart feature.
-- `users` — one document per Shopify customer who has ever signed in; unique index on `shopifyCustomerId`; stores `email`, `firstName`, `lastName`, Fernet-encrypted `shopifyAccessTokenEnc`/`shopifyRefreshTokenEnc`, `shopifyTokenExpiresAt`, timestamps. **Never stores a plaintext Shopify token.**
-- `auth_refresh_tokens` — one document per issued refresh token; indexed on `tokenHash` and `userId`; stores a SHA-256 hash of the token (never the raw token), `expiresAt`, `revoked` boolean, `createdAt`.
-No product/catalog/cart data is ever persisted in MongoDB — that always lives in Shopify and is fetched live (with a short in-memory TTL cache for a few read endpoints, see `shopify_integration/cache.py`).
 
-### API Structure
-All backend routes are prefixed `/api` at the Kubernetes-ingress level (`server.py` mounts routers with that prefix). Two logical sub-APIs:
-- `/api/shopify/*` — catalog/cart/checkout-prep (see Section 7 for the full endpoint list).
-- `/api/auth/*` — Shopify Customer Account auth + Now Kart sessions + addresses (see Section 9 for the full endpoint list).
+| Collection | Owner module | Purpose |
+|---|---|---|
+| `status_checks` | legacy scaffold | Unused template artifact |
+| `users` | auth (customer) | One doc per Shopify customer; Fernet-encrypted Shopify tokens |
+| `auth_refresh_tokens` | auth (customer) | SHA-256 hashed refresh tokens; single-use rotation |
+| `delivery_jobs` | delivery | Central delivery job lifecycle records |
+| `stores` | delivery | Store configuration; seeded on startup |
+| `webhook_events` | webhooks | Shopify webhook audit log + idempotency |
+| `parent_orders` | delivery | Multi-vendor fan-out records; links to ≥1 delivery_jobs |
+| `riders` | rider | One doc per rider; `isDeleted` soft-delete; bcrypt `passwordHash` |
+| `rider_refresh_tokens` | rider | Opaque refresh tokens stored as SHA-256 hash |
+| `vendors` | vendor | One doc per vendor; bcrypt `passwordHash` |
+| `vendor_refresh_tokens` | vendor | Opaque refresh tokens stored as SHA-256 hash |
+| `admin_users` | admin | One doc per admin; bcrypt `passwordHash`; `role` string |
+| `admin_refresh_tokens` | admin | Opaque refresh tokens stored as SHA-256 hash |
+| `audit_logs` | admin | Every significant admin action with actor + payload |
+
+No product/catalog/cart data is ever persisted in MongoDB — that always lives in Shopify and is fetched live.
+
+### Multi-Vendor Order Orchestration (Iteration 20)
+`backend/delivery/service.py::orchestrate_multi_vendor_order()` is the single entry-point for `orders/paid` webhooks as of Iteration 20.
+
+- **Fan-out:** one delivery job is created per distinct vendor group found in the order's line items (matched by `vendor` field against `vendors.businessName`, case-insensitive exact regex).
+- **Parent order record:** a `parent_orders` document is inserted before any job creation, acting as an idempotency guard. Unique index on `shopifyOrderId` — re-processing the same webhook is a no-op.
+- **Unmapped vendors:** groups with no matching vendor document are recorded in `parent_orders.unmappedGroups`. Never silently assigned to a default vendor.
+- **Legacy mode:** orders with no `vendor` field follow the existing single-job path, wrapped in a `parent_orders` record with `mode="single_vendor"`. Full backward compatibility confirmed by regression tests.
+- **⚠ No `iteration_20.json` test report yet** — `test_multi_vendor_orchestration.py` exists and must be exercised by a testing-agent pass before production use.
+All backend routes are prefixed `/api` at the Kubernetes-ingress/Railway level. Logical sub-APIs:
+- `/api/shopify/*` — catalog/cart/checkout-prep.
+- `/api/auth/*` — Shopify Customer Account auth + Now Kart sessions + addresses.
+- `/api/tracking/*` — order tracking.
+- `/api/delivery/*` — delivery job lifecycle.
+- `/api/webhooks/*` — Shopify event ingestion.
+- `/api/rider/*` — rider-facing endpoints (auth, job ops, status).
+- `/api/vendor/*` — vendor-facing endpoints (auth, order queue, workflow).
+- `/api/admin/*` — admin-facing endpoints (auth, RBAC management, dashboard, store, delivery overrides).
 
 ### Repository Structure (frontend data-access pattern)
 Frontend screens/hooks never call `fetch`/`apiClient` directly for domain data — they go through a small `repositories/` layer (`productRepository`, `cartRepository`, `authRepository`), each of which only knows about `/api/shopify/*` or `/api/auth/*` paths and returns typed domain objects. This is the single seam where the frontend would swap backend implementations without touching any screen.
@@ -217,7 +262,9 @@ Frontend screens/hooks never call `fetch`/`apiClient` directly for domain data �
 See Section 5 for the complete, annotated tree.
 
 ### Deployment Architecture
-Currently **dev/preview only**, inside this Emergent container: `supervisor` manages `backend` (uvicorn on port 8001) and `expo` (Metro dev server on port 3000, proxied). Kubernetes ingress routes `/api/*` to port 8001 and everything else to port 3000. **No production deployment has occurred.** Production deployment for this class of project is: click **Publish** (top-right of the Emergent UI) → **Deploy your app** → generate iOS/Android builds. This has not been done yet for Now Kart.
+- **Dev/preview:** inside this Emergent container — `supervisor` manages `backend` (uvicorn on port 8001) and `expo` (Metro dev server on port 3000, proxied). Kubernetes ingress routes `/api/*` to port 8001 and everything else to port 3000.
+- **Production:** Railway, Railpack builder. Backend entry point: `cd backend && python3 -m uvicorn server:app --host 0.0.0.0 --port $PORT` (from `Procfile`/`railway.json`). Health-check: `GET /api/`. Production URL: `https://nowkartcustomer-production.up.railway.app`. Slim dependency set in `backend/requirements.production.txt`.
+- **Native builds:** `frontend/eas.json` defines four EAS build profiles (`development`, `simulator`, `preview`, `production`). All profiles inject `EXPO_PUBLIC_BACKEND_URL=https://nowkartcustomer-production.up.railway.app`. Run via `cd frontend && eas build --profile <profile>`.
 
 ### Security Architecture (see Section 13 for full detail)
 BFF-mediated Shopify token custody; Fernet-at-rest encryption of Shopify tokens in MongoDB; HS256 JWT for Now Kart's own access tokens; SHA-256-hashed, single-use, rotating opaque refresh tokens with reuse-detection (family-wide revocation on detected reuse); PKCE generated and held only in device memory; OAuth `state` is single-use (popped, not just read, from a TTL cache); the backend rejects any `platform="web"` OAuth authorize request outright (no web OAuth client is registered, so this closes an unvalidated-redirect attack surface).
@@ -1063,7 +1110,7 @@ See Section 18 for names. Both are `.gitignore`d as of Iteration 4's hardening p
 See Section 3 "Deep Linking" and this section's `app.json` note above — the second `expo.scheme` entry is the one that matters for OAuth; it must always exactly match the Shopify Customer Account API's registered redirect URI (`SHOPIFY_CUSTOMER_ACCOUNT_MOBILE_REDIRECT_URI`).
 
 ### Build Configuration
-No EAS/native build configuration has been created yet in this project (no `eas.json`). Production builds are generated exclusively via the Emergent platform's **Publish** button — do not introduce a separate EAS CLI workflow.
+`frontend/eas.json` defines four EAS build profiles: `development`, `simulator`, `preview`, `production`. All profiles inject `EXPO_PUBLIC_BACKEND_URL=https://nowkartcustomer-production.up.railway.app`. The `submit.production.ios` section contains placeholder Apple credential fields (`REPLACE_WITH_*`) to fill before App Store submission. Run a build with `cd frontend && eas build --profile <profile>`.
 
 ---
 
@@ -1100,7 +1147,7 @@ The callback/redirect URI is a three-way agreement that must always match exactl
 Changing any one of the three without the other two breaks native login with a Shopify-side "redirect_uri mismatch" error.
 
 ### 6. Build configuration
-No `eas.json` exists and none should be introduced. Native builds are generated exclusively through the Emergent platform's **Publish** button (top-right) → **Deploy your app**, which handles iOS/Android build generation. Do not set up a separate EAS CLI/Expo account workflow for this project.
+`frontend/eas.json` is present and configured with four build profiles pointing to the Railway production backend. Use `eas build --profile <profile>` in the `frontend/` directory. For App Store submission fill in the Apple credential placeholders in `eas.json`'s `submit.production.ios` block.
 
 ### 7. Deep linking
 Already implemented and requires no new code in a new account — just correct configuration (Section 5 above). `frontend/app/auth/callback.tsx` is a web-only safety net, not part of the real (native-only) flow, and needs no changes either.
@@ -1210,29 +1257,32 @@ See Section 11 in full. Summary: every iteration's `testing_agent` pass must re-
 
 ## 24. NEXT IMMEDIATE TASK
 
-### Current Project Status
-Iteration 4 (Customer Authentication + Checkout Foundation) code is **complete, code-reviewed, security-audited, and functionally tested (2 rounds) for everything this preview environment can exercise**, with zero outstanding issues in that scope. All previously-known bugs are fixed and regression-verified. The app currently supports: guest and authenticated browsing/search/cart/wishlist, passwordless Shopify Customer Account Sign Up/Log In/Logout with secure backend-mediated session management, address management, a checkout foundation (stock validation + buyer-identity attachment) with an explicitly disabled payment CTA, and — corrected in this handover revision — a **code-complete Order History display** (Orders tab + Profile's "Order History" link) that has not yet been exercised against a real signed-in customer.
+### Current Project Status (as of HEAD e5dc7c7)
+Iterations 1–20 complete. The shared FastAPI backend (8 modules, 80+ endpoints, 200+ tests) is fully built, tested, and deployed to Railway. The Customer App is production-ready. `eas.json` is configured for native iOS/Android builds. The three frontend apps that consume the backend APIs have not been started yet.
 
-### Current Blocker
-**None functionally.** The blocker is environmental/protocol, not a bug: completing a real Shopify OAuth login (past opening the hosted login page) requires a **native development/production build** (Section 8) — this cannot be done in Expo Go or the web preview. Everything currently gated behind real authentication (Orders with real data, Addresses CRUD as a real customer) is code-complete and waiting on this same gate, not separately blocked.
+### Current Blockers
+1. **No formal test report for Iteration 20** — `test_multi_vendor_orchestration.py` exists but `iteration_20.json` is missing. Must be run before treating multi-vendor orchestration as production-verified.
+2. **Pre-deployment checklist incomplete** — see `docs/PROJECT_HANDOVER.md` deployment checklist (webhook secret, Shopify webhook registration, CORS hardening, default admin password change).
+3. **Native Shopify OAuth unverified** — requires a real native build + real device. `eas.json` is now in place to generate that build.
 
-### Exact Next Task **[recommendation — confirm with the user before starting, per standing project workflow]**
-**Milestone 1 from Section 17: Native OAuth Verification.** Concretely:
-1. Ask the user to generate a native development or production build via the Emergent **Publish** button.
-2. Once a build exists, walk through: Sign Up → email verification → redirect back into the app → authenticated Profile shows real name/email → Orders tab shows real orders (or the correct empty state) → Addresses screen shows real/creatable addresses → app relaunch restores the session → Logout returns to guest state.
-3. Have a `testing_agent` pass (or the user directly) exercise this on the real device/build, since this is precisely the boundary automated Playwright-based testing in this container cannot cross.
-4. Fix any bugs found; re-verify; then, and only then, is it accurate to describe Shopify Customer Account authentication as "verified" rather than "code-complete, untested."
+### Exact Next Tasks **[confirm with user before starting]**
 
-**Do not** re-attempt "wire order history to real data" as a task — that work is already done (see Section 6 "Orders"); an earlier draft of this document incorrectly listed it as the next task, and that has been corrected throughout this revision.
+**Immediate (before any public launch):**
+1. Run `testing_agent` against `test_multi_vendor_orchestration.py` → produce `iteration_20.json`.
+2. Complete the pre-deployment checklist in `docs/PROJECT_HANDOVER.md`.
+3. Generate a native build: `cd frontend && eas build --profile development` → verify Shopify OAuth login end-to-end on a real device.
 
-### Acceptance Criteria
-See Milestone 1's Acceptance Criteria in Section 17 — reproduced here for convenience: real login completes on-device; session persists across relaunch; Orders/Addresses render real data for the signed-in customer; logout works cleanly.
+**Strategic (build the three frontend apps — all backends are ready):**
+1. **Vendor App** (separate Expo repo) — operationally critical; orders are stuck at `WAITING_VENDOR` without it.
+2. **Rider App** (separate Expo repo) — depends on vendor having accepted/prepared the order.
+3. **Admin Dashboard** (separate React+Vite repo) — consumes `/api/admin/*`; Google Maps JS SDK for live rider map.
 
-### Definition of Done
-- All Milestone 1 acceptance criteria manually verified on at least one real device/build.
-- Any bugs found fixed and re-verified via a focused `testing_agent` retest.
-- `test_result.md` updated with a new task entry + `agent_communication` log entry, exactly as done for every prior iteration.
-- This document's header line and Section 8 "Native OAuth Status" updated from "untested boundary" to "verified," with the device/OS/build noted.
+### Definition of Done (for pre-launch)
+- `iteration_20.json` test report exists and all tests pass.
+- Pre-deployment checklist fully checked off.
+- At least one native build generated and Shopify OAuth login verified on real device.
+- Default admin password changed from `Admin2026!`.
+- CORS tightened in `server.py`.
 
 ---
 
@@ -1242,6 +1292,10 @@ See Milestone 1's Acceptance Criteria in Section 17 — reproduced here for conv
 - **Catalog/Cart domain** → `backend/shopify_integration/` (backend) + `frontend/src/repositories/{product,cart}Repository.ts` + `frontend/src/features/cart/CartContext.tsx` (frontend).
 - **Auth/Session/Address domain** → `backend/auth/` (backend) + `frontend/src/features/auth/`, `frontend/src/services/auth/`, `frontend/src/repositories/authRepository.ts` (frontend).
 - **Wishlist domain** → `frontend/src/features/wishlist/WishlistContext.tsx` (frontend-only today; no backend module yet).
+- **Delivery/Orchestration domain** → `backend/delivery/` + `backend/webhooks/`.
+- **Rider domain** → `backend/rider/`.
+- **Vendor domain** → `backend/vendor/`.
+- **Admin domain** → `backend/admin/` (6 sub-routers).
 
 ### Important Files (the ones a new engineer will touch most often)
 - `backend/server.py` — app wiring; touch only for new router mounting or top-level middleware changes.

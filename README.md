@@ -10,12 +10,16 @@
 |---|---|
 | Customer App (Expo/React Native) | ✅ Production-ready |
 | Delivery Service Backend | ✅ Complete |
-| Rider Backend | ✅ Complete |
-| Vendor Backend | ✅ Complete |
-| Admin Backend + RBAC | ✅ Complete |
-| Rider App | 🔲 Not started |
-| Vendor App | 🔲 Not started |
-| Admin Dashboard (web) | 🔲 Not started |
+| Rider Backend | ✅ Complete (38/38 tests) |
+| Vendor Backend | ✅ Complete (31/32 tests) |
+| Admin Backend + RBAC | ✅ Complete (46/46 tests) |
+| Multi-vendor orchestration | ✅ Complete (Iteration 20) |
+| Rider restore endpoint | ✅ Complete (HEAD e5dc7c7) |
+| Railway production deployment | ✅ Live — `nowkartcustomer-production.up.railway.app` |
+| iOS/Android build config (eas.json) | ✅ Configured |
+| Rider App | 🔲 Not started (separate Expo repo, backend ready) |
+| Vendor App | 🔲 Not started (separate Expo repo, backend ready) |
+| Admin Dashboard (web) | 🔲 Not started (separate React+Vite repo, backend ready) |
 
 ---
 
@@ -39,6 +43,8 @@
 | Database | MongoDB (operations data only — never product data) |
 | Commerce | Shopify Storefront API + Customer Account API (OAuth2 + PKCE) |
 | Process | Supervisor · NGINX · port 8001 (backend) / 3000 (expo) |
+| Production hosting | Railway (Railpack builder) · `nowkartcustomer-production.up.railway.app` |
+| Native builds | EAS (Expo Application Services) · `frontend/eas.json` |
 
 ---
 
@@ -48,18 +54,22 @@
 /
 ├── README.md                 ← you are here
 ├── backend/                  FastAPI backend (all 4 apps share this)
-│   ├── server.py             Entry point
+│   ├── server.py             Entry point — mounts 15 routers
 │   ├── auth/                 Customer OAuth + sessions
 │   ├── shopify_integration/  Catalog, cart, checkout
 │   ├── tracking/             Order tracking
-│   ├── delivery/             Delivery job lifecycle
+│   ├── delivery/             Delivery job lifecycle + multi-vendor orchestration
 │   ├── rider/                Rider auth + operations
 │   ├── vendor/               Vendor auth + order queue
 │   ├── admin/                Admin auth + RBAC + management
 │   └── webhooks/             Shopify event ingestion
 ├── frontend/                 Customer App (Expo)
 │   ├── app/                  expo-router screens
-│   └── src/                  features/ · repositories/ · theme/ · utils/
+│   ├── src/                  features/ · repositories/ · theme/ · utils/
+│   └── eas.json              EAS build profiles (dev/simulator/preview/production)
+├── Procfile / railway.json / nixpacks.toml  Railway production deployment
+├── requirements.txt          Dev dependencies
+├── backend/requirements.production.txt  Slim production deps (Railway)
 ├── docs/                     Project documentation ← start here
 └── memory/                   AI session memory (PRD, credentials)
 ```
@@ -105,7 +115,9 @@ curl http://localhost:8001/api/shopify/home
 
 ## Roadmap
 
-**Next:** Vendor App → Rider App → Admin Dashboard → Live GPS → Push Notifications
+**Backend complete** (all 8 modules, 170+ tests). **Next:** Build frontend apps that consume the existing APIs.
+
+Recommended order: Vendor App → Rider App → Admin Dashboard → Live GPS → Push Notifications
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full plan.
 
@@ -114,6 +126,7 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full plan.
 ## Notes
 
 - This repository contains the **Customer App + shared FastAPI backend only**
-- Rider App, Vendor App, and Admin Dashboard are **separate repositories**
+- Rider App, Vendor App, and Admin Dashboard are **separate repositories** — all their backend APIs are built and tested in this repo
 - All backend APIs are built and tested — mobile apps consume them via the documented endpoints
 - Shopify is the system of record for products, inventory, and payments — never duplicated here
+- Production backend: `https://nowkartcustomer-production.up.railway.app`

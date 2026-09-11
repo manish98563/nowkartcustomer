@@ -2,7 +2,7 @@
 
 ---
 
-## ✅ Completed (Iterations 1–11)
+## ✅ Completed (Iterations 1–20 + Infrastructure)
 
 | Milestone | What |
 |---|---|
@@ -11,20 +11,26 @@
 | **Checkout** | Order review, Shopify WebView checkout, confirmation screen |
 | **Order Management** | Order list, order detail, reorder, live tracking (30s polling) |
 | **Delivery Service** | State machine, Shopify webhook ingestion, MongoDB collections |
-| **Rider Backend** | Auth (JWT), CRUD, status, job ops, stats |
+| **Rider Backend** | Auth (JWT), CRUD, status, job ops, stats, soft-delete restore |
 | **Vendor Backend** | Auth (JWT), order queue, accept/reject/prepare/ready workflow |
 | **Admin Backend** | Auth (JWT+RBAC), audit logs, dashboard stats, all ops secured |
+| **Multi-vendor orchestration** | `parent_orders` fan-out per vendor group (Iteration 20) |
+| **Railway production deployment** | `nowkartcustomer-production.up.railway.app` (Railpack) |
+| **EAS build configuration** | `frontend/eas.json` — iOS dev/simulator/preview/production |
 
 ---
 
 ## 🔲 Current Priority — Mobile Applications
 
-### P0 · Pre-deployment
-- Register Shopify webhooks + set `SHOPIFY_WEBHOOK_SECRET`
-- Generate native iOS/Android build (Emergent Publish)
+### P0 · Pre-deployment (do before any public launch)
+- Register Shopify webhooks + set `SHOPIFY_WEBHOOK_SECRET` (Railway env var)
+  → `orders/paid` and `orders/cancelled` → `https://nowkartcustomer-production.up.railway.app/api/webhooks/shopify`
+- Run formal testing-agent pass for Iteration 20 multi-vendor orchestration (`iteration_20.json` missing)
+- Generate native iOS/Android build using `frontend/eas.json` (`eas build --profile production`)
 - Verify Shopify OAuth login end-to-end on real device
-- Update default store address in admin
-- Change default admin password
+- Update default store address via `PUT /api/admin/stores/{id}`
+- Change default admin password (`admin@nowkart.com` / `Admin2026!`)
+- Harden CORS: explicit `allow_origins` allowlist in `server.py`
 
 ### P1 · Rider App (separate Expo repo)
 Backend APIs: fully ready (`/api/rider/*`)
